@@ -1,0 +1,410 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDateKey(key) {
+      return key is string && key.size() == 10 && key.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdminEmail() {
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'elbodegondellicor247@gmail.com';
+    }
+
+    function isAdmin() {
+      return isAdminEmail() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Validation Blueprints ---
+    function isValidStoreSettings(data) {
+      return data.keys().hasAll(['catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop', 'updatedAt']) &&
+        data.keys().hasOnly(['catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop', 'updatedAt']) &&
+        data.catalogVersion is int && data.catalogVersion >= 1 && data.catalogVersion <= 1000000 &&
+        data.storeOpen is bool &&
+        data.deliveryFeeCop is number && data.deliveryFeeCop >= 0 && data.deliveryFeeCop <= 200000 &&
+        data.freeDeliveryMinCop is number && data.freeDeliveryMinCop >= 0 && data.freeDeliveryMinCop <= 2000000 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'name', 'presentation', 'category', 'priceCop', 'stock',
+          'supportsColdOption', 'imageUrl', 'active', 'sortOrder', 'searchLower', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'name', 'presentation', 'category', 'priceCop', 'costPrice', 'stock',
+          'supportsColdOption', 'imageUrl', 'active', 'sortOrder', 'searchLower', 'updatedAt'
+        ]) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.presentation is string && data.presentation.size() >= 1 && data.presentation.size() <= 80 &&
+        data.category in ['Combos', 'Cervezas', 'Licores', 'Snacks', 'Cigarrillos'] &&
+        data.priceCop is number && data.priceCop > 0 && data.priceCop <= 50000000 &&
+        (!('costPrice' in data) || (data.costPrice is number && data.costPrice >= 0 && data.costPrice <= 50000000)) &&
+        data.stock is int && data.stock >= 0 && data.stock <= 100000 &&
+        data.supportsColdOption is bool &&
+        data.imageUrl is string && data.imageUrl.size() <= 500 &&
+        data.active is bool &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 100000 &&
+        data.searchLower is string && data.searchLower.size() >= 1 && data.searchLower.size() <= 160 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidOrderItem(item) {
+      return item is map &&
+        item.keys().hasAll(['productId', 'name', 'presentation', 'qty', 'unitPriceCop', 'temperature']) &&
+        item.keys().hasOnly(['productId', 'name', 'presentation', 'qty', 'unitPriceCop', 'unitCostCop', 'temperature']) &&
+        item.productId is string && item.productId.size() >= 1 && item.productId.size() <= 128 &&
+        item.name is string && item.name.size() >= 1 && item.name.size() <= 120 &&
+        item.presentation is string && item.presentation.size() >= 1 && item.presentation.size() <= 80 &&
+        item.qty is int && item.qty >= 1 && item.qty <= 99 &&
+        item.unitPriceCop is number && item.unitPriceCop > 0 && item.unitPriceCop <= 50000000 &&
+        (!('unitCostCop' in item) || (item.unitCostCop is number && item.unitCostCop >= 0 && item.unitCostCop <= 50000000)) &&
+        item.temperature in ['Fría', 'Al clima', 'N/A'];
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'userId', 'isGuest', 'customerName', 'phone', 'address', 'neighborhood',
+          'referencePoint', 'paymentMethod', 'cashTenderCop', 'notes', 'items',
+          'subtotalCop', 'deliveryFeeCop', 'totalCop', 'status', 'origin', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'isGuest', 'customerName', 'phone', 'address', 'neighborhood',
+          'referencePoint', 'paymentMethod', 'cashTenderCop', 'notes', 'items',
+          'subtotalCop', 'deliveryFeeCop', 'totalCop', 'cogsCop', 'dateKey',
+          'status', 'origin', 'createdAt'
+        ]) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.isGuest is bool &&
+        data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 100 &&
+        data.phone is string && data.phone.size() <= 20 &&
+        data.address is string && data.address.size() <= 180 &&
+        data.neighborhood is string && data.neighborhood.size() <= 100 &&
+        data.referencePoint is string && data.referencePoint.size() <= 180 &&
+        data.paymentMethod in [
+          'Nequi / Daviplata (Transferencia)',
+          'Efectivo contraentrega',
+          'Datáfono contraentrega',
+          'Efectivo',
+          'Nequi / Daviplata',
+          'Datáfono'
+        ] &&
+        data.cashTenderCop is number && data.cashTenderCop >= 0 && data.cashTenderCop <= 200000000 &&
+        data.notes is string && data.notes.size() <= 280 &&
+        data.items is list && data.items.size() >= 1 && data.items.size() <= 30 &&
+        isValidOrderItem(data.items[0]) &&
+        data.subtotalCop is number && data.subtotalCop > 0 && data.subtotalCop <= 200000000 &&
+        data.deliveryFeeCop is number && data.deliveryFeeCop >= 0 && data.deliveryFeeCop <= 200000 &&
+        data.totalCop is number && data.totalCop >= data.subtotalCop && data.totalCop <= 200200000 &&
+        (!('cogsCop' in data) || (data.cogsCop is number && data.cogsCop >= 0 && data.cogsCop <= 200000000)) &&
+        (!('dateKey' in data) || isValidDateKey(data.dateKey)) &&
+        data.status in ['Pendiente', 'Confirmado', 'En camino', 'Entregado', 'Cancelado'] &&
+        data.origin in ['App PWA', 'POS / WhatsApp'] &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidPurchaseItem(item) {
+      return item is map &&
+        item.keys().hasAll(['productId', 'name', 'presentation', 'qty', 'unitCostCop']) &&
+        item.keys().hasOnly(['productId', 'name', 'presentation', 'qty', 'unitCostCop']) &&
+        item.productId is string && item.productId.size() >= 1 && item.productId.size() <= 128 &&
+        item.name is string && item.name.size() >= 1 && item.name.size() <= 120 &&
+        item.presentation is string && item.presentation.size() >= 1 && item.presentation.size() <= 80 &&
+        item.qty is int && item.qty >= 1 && item.qty <= 50000 &&
+        item.unitCostCop is number && item.unitCostCop >= 0 && item.unitCostCop <= 50000000;
+    }
+
+    function isValidPurchase(data) {
+      return data.keys().hasAll([
+          'supplierName', 'invoiceNumber', 'paymentSource', 'items',
+          'totalCostCop', 'notes', 'dateKey', 'createdBy', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'supplierName', 'invoiceNumber', 'paymentSource', 'items',
+          'totalCostCop', 'notes', 'dateKey', 'createdBy', 'createdAt'
+        ]) &&
+        data.supplierName is string && data.supplierName.size() >= 1 && data.supplierName.size() <= 120 &&
+        data.invoiceNumber is string && data.invoiceNumber.size() <= 60 &&
+        data.paymentSource in ['Caja Efectivo', 'Transferencia / Banco'] &&
+        data.items is list && data.items.size() >= 1 && data.items.size() <= 50 &&
+        isValidPurchaseItem(data.items[0]) &&
+        data.totalCostCop is number && data.totalCostCop >= 0 && data.totalCostCop <= 200000000 &&
+        data.notes is string && data.notes.size() <= 280 &&
+        isValidDateKey(data.dateKey) &&
+        data.createdBy is string && data.createdBy == request.auth.uid &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll([
+          'concept', 'category', 'amountCop', 'paymentSource',
+          'notes', 'dateKey', 'createdBy', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'concept', 'category', 'amountCop', 'paymentSource',
+          'notes', 'dateKey', 'createdBy', 'createdAt'
+        ]) &&
+        data.concept is string && data.concept.size() >= 2 && data.concept.size() <= 140 &&
+        data.category in [
+          'Domiciliarios / Gasolina',
+          'Hielo y Bolsas',
+          'Servicios / Arriendo',
+          'Nómina / Turnos',
+          'Otros'
+        ] &&
+        data.amountCop is number && data.amountCop > 0 && data.amountCop <= 200000000 &&
+        data.paymentSource in ['Efectivo de caja', 'Nequi / Banco'] &&
+        data.notes is string && data.notes.size() <= 280 &&
+        isValidDateKey(data.dateKey) &&
+        data.createdBy is string && data.createdBy == request.auth.uid &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidDailyStats(data, dateKey) {
+      return data.keys().hasAll([
+          'dateKey', 'salesTotalCop', 'salesCashCop', 'salesNequiCop', 'salesCardCop',
+          'cogsTotalCop', 'purchasesTotalCop', 'purchasesCashCop', 'purchasesBankCop',
+          'expensesTotalCop', 'expensesCashCop', 'expensesBankCop',
+          'ordersCount', 'purchasesCount', 'expensesCount', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'dateKey', 'salesTotalCop', 'salesCashCop', 'salesNequiCop', 'salesCardCop',
+          'cogsTotalCop', 'purchasesTotalCop', 'purchasesCashCop', 'purchasesBankCop',
+          'expensesTotalCop', 'expensesCashCop', 'expensesBankCop',
+          'ordersCount', 'purchasesCount', 'expensesCount', 'updatedAt'
+        ]) &&
+        data.dateKey == dateKey &&
+        data.salesTotalCop is number && data.salesTotalCop >= 0 && data.salesTotalCop <= 1000000000 &&
+        data.salesCashCop is number && data.salesCashCop >= 0 && data.salesCashCop <= 1000000000 &&
+        data.salesNequiCop is number && data.salesNequiCop >= 0 && data.salesNequiCop <= 1000000000 &&
+        data.salesCardCop is number && data.salesCardCop >= 0 && data.salesCardCop <= 1000000000 &&
+        data.cogsTotalCop is number && data.cogsTotalCop >= 0 && data.cogsTotalCop <= 1000000000 &&
+        data.purchasesTotalCop is number && data.purchasesTotalCop >= 0 && data.purchasesTotalCop <= 1000000000 &&
+        data.purchasesCashCop is number && data.purchasesCashCop >= 0 && data.purchasesCashCop <= 1000000000 &&
+        data.purchasesBankCop is number && data.purchasesBankCop >= 0 && data.purchasesBankCop <= 1000000000 &&
+        data.expensesTotalCop is number && data.expensesTotalCop >= 0 && data.expensesTotalCop <= 1000000000 &&
+        data.expensesCashCop is number && data.expensesCashCop >= 0 && data.expensesCashCop <= 1000000000 &&
+        data.expensesBankCop is number && data.expensesBankCop >= 0 && data.expensesBankCop <= 1000000000 &&
+        data.ordersCount is int && data.ordersCount >= 0 && data.ordersCount <= 1000000 &&
+        data.purchasesCount is int && data.purchasesCount >= 0 && data.purchasesCount <= 1000000 &&
+        data.expensesCount is int && data.expensesCount >= 0 && data.expensesCount <= 1000000 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'fullName', 'phone', 'address', 'neighborhood',
+          'referencePoint', 'preferredPayment', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'email', 'fullName', 'phone', 'address', 'neighborhood',
+          'referencePoint', 'preferredPayment', 'role', 'isAdmin', 'updatedAt'
+        ]) &&
+        data.userId is string && data.userId == userId &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+        data.phone is string && data.phone.size() <= 20 &&
+        data.address is string && data.address.size() <= 180 &&
+        data.neighborhood is string && data.neighborhood.size() <= 100 &&
+        data.referencePoint is string && data.referencePoint.size() <= 180 &&
+        data.preferredPayment in [
+          'Nequi / Daviplata (Transferencia)',
+          'Efectivo contraentrega',
+          'Datáfono contraentrega'
+        ] &&
+        (!('role' in data) || (data.role in ['customer', 'admin'] && (data.role != 'admin' || isAdmin()))) &&
+        (!('isAdmin' in data) || (data.isAdmin is bool && (data.isAdmin == false || isAdmin()))) &&
+        data.updatedAt is timestamp;
+    }
+
+    // --- Collection Match Blocks ---
+    match /test/connection {
+      allow get: if true;
+      allow list, create, update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow get: if settingId == 'store';
+      allow list: if false;
+      allow create, update: if settingId == 'store' &&
+        isAdmin() &&
+        isValidStoreSettings(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (existing().active == true || isAdmin());
+      allow list: if existing().active == true || isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(productId) && isValidProduct(incoming()) && (
+        // Action 1: Admin full product update (includes costPrice & stock adjustments)
+        (isAdmin() &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'presentation', 'category', 'priceCop', 'costPrice', 'stock',
+            'supportsColdOption', 'imageUrl', 'active', 'sortOrder', 'searchLower', 'updatedAt'
+          ])) ||
+        // Action 2: Checkout runTransaction atomic stock decrement
+        (existing().active == true &&
+          incoming().stock >= 0 &&
+          incoming().stock < existing().stock &&
+          incoming().updatedAt == existing().updatedAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['stock']))
+      );
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && (
+        isAdmin() ||
+        (isSignedIn() && existing().userId == request.auth.uid)
+      );
+      allow list: if isAdmin() || (
+        isSignedIn() && existing().userId == request.auth.uid
+      );
+      allow create: if isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        incoming().createdAt == request.time && (
+          // Action 1: Customer PWA Order (requires address/phone length)
+          (incoming().origin == 'App PWA' &&
+            incoming().status == 'Pendiente' &&
+            incoming().phone.size() >= 7 &&
+            incoming().address.size() >= 4 &&
+            incoming().neighborhood.size() >= 2 && (
+              (isSignedIn() && incoming().isGuest == false && incoming().userId == request.auth.uid) ||
+              (!isSignedIn() && incoming().isGuest == true && incoming().userId == 'guest')
+            )) ||
+          // Action 2: Admin POS / WhatsApp Manual Sale
+          (isAdmin() &&
+            incoming().origin == 'POS / WhatsApp' &&
+            incoming().status in ['Pendiente', 'Entregado'] &&
+            incoming().userId == request.auth.uid)
+        );
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().isGuest == existing().isGuest &&
+        incoming().origin == existing().origin &&
+        incoming().createdAt == existing().createdAt &&
+        !(existing().status in ['Entregado', 'Cancelado']) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if false;
+    }
+
+    match /purchases/{purchaseId} {
+      allow get, list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(purchaseId) &&
+        isValidPurchase(incoming()) &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /expenses/{expenseId} {
+      allow get, list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /daily_stats/{dateKey} {
+      allow get, list: if isAdmin();
+      allow create: if isValidDateKey(dateKey) &&
+        isValidDailyStats(incoming(), dateKey) &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (incoming().purchasesTotalCop == 0 &&
+            incoming().purchasesCashCop == 0 &&
+            incoming().purchasesBankCop == 0 &&
+            incoming().expensesTotalCop == 0 &&
+            incoming().expensesCashCop == 0 &&
+            incoming().expensesBankCop == 0 &&
+            incoming().purchasesCount == 0 &&
+            incoming().expensesCount == 0 &&
+            incoming().salesTotalCop <= 50000000)
+        );
+      allow update: if isValidDateKey(dateKey) &&
+        isValidDailyStats(incoming(), dateKey) &&
+        incoming().dateKey == existing().dateKey &&
+        incoming().updatedAt == request.time && (
+          (isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'salesTotalCop', 'salesCashCop', 'salesNequiCop', 'salesCardCop',
+              'cogsTotalCop', 'purchasesTotalCop', 'purchasesCashCop', 'purchasesBankCop',
+              'expensesTotalCop', 'expensesCashCop', 'expensesBankCop',
+              'ordersCount', 'purchasesCount', 'expensesCount', 'updatedAt'
+            ])) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly([
+              'salesTotalCop', 'salesCashCop', 'salesNequiCop', 'salesCardCop',
+              'cogsTotalCop', 'ordersCount', 'updatedAt'
+            ]) &&
+            incoming().salesTotalCop >= existing().salesTotalCop &&
+            (incoming().salesTotalCop - existing().salesTotalCop) <= 50000000 &&
+            incoming().ordersCount >= existing().ordersCount)
+        );
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        (!('userId' in existing()) || incoming().userId == existing().userId) &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'userId', 'email', 'fullName', 'phone', 'address', 'neighborhood',
+          'referencePoint', 'preferredPayment', 'role', 'isAdmin', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list, create, update, delete: if false;
+    }
+  }
+}

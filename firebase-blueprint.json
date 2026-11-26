@@ -1,0 +1,541 @@
+{
+  "entities": {
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Configuración global de la tienda y versión del catálogo para caché local.",
+      "type": "object",
+      "properties": {
+        "catalogVersion": {
+          "type": "number",
+          "description": "Versión entera incremental del catálogo para invalidar cachés locales."
+        },
+        "storeOpen": {
+          "type": "boolean",
+          "description": "Indica si el servicio 24/7 está recibiendo pedidos."
+        },
+        "deliveryFeeCop": {
+          "type": "number",
+          "description": "Costo base del domicilio en pesos colombianos (por defecto 4000)."
+        },
+        "freeDeliveryMinCop": {
+          "type": "number",
+          "description": "Monto mínimo en COP para envío gratis."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal del servidor de la última actualización."
+        }
+      },
+      "required": ["catalogVersion", "storeOpen", "deliveryFeeCop", "freeDeliveryMinCop", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Producto del catálogo de El Bodegón del Licor con costo unitario y precio de venta.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nombre comercial del producto."
+        },
+        "presentation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Presentación o volumen."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Combos", "Cervezas", "Licores", "Snacks", "Cigarrillos"],
+          "description": "Categoría principal del producto."
+        },
+        "priceCop": {
+          "type": "number",
+          "description": "Precio de venta en pesos colombianos (COP)."
+        },
+        "costPrice": {
+          "type": "number",
+          "description": "Costo unitario de compra en pesos colombianos (COP)."
+        },
+        "stock": {
+          "type": "number",
+          "description": "Unidades disponibles en inventario."
+        },
+        "supportsColdOption": {
+          "type": "boolean",
+          "description": "Habilita el selector ¿Fría o al clima? en la tarjeta."
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "URL externa optimizada .webp/.png o ruta estática."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Visibilidad activa en el catálogo público."
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Orden numérico para paginación determinística."
+        },
+        "searchLower": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Texto en minúsculas para búsqueda."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha de actualización validada en servidor."
+        }
+      },
+      "required": [
+        "name",
+        "presentation",
+        "category",
+        "priceCop",
+        "stock",
+        "supportsColdOption",
+        "imageUrl",
+        "active",
+        "sortOrder",
+        "searchLower",
+        "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Pedido de domicilio o venta manual POS / WhatsApp registrado en Firestore.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del cliente autenticado, admin o 'guest' para invitados."
+        },
+        "isGuest": {
+          "type": "boolean",
+          "description": "Indica si el pedido fue realizado sin inicio de sesión."
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Nombre completo del destinatario."
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "Celular/WhatsApp de contacto."
+        },
+        "address": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Dirección exacta de entrega."
+        },
+        "neighborhood": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100,
+          "description": "Barrio o sector de entrega."
+        },
+        "referencePoint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Punto de referencia para el domiciliario."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": [
+            "Nequi / Daviplata (Transferencia)",
+            "Efectivo contraentrega",
+            "Datáfono contraentrega",
+            "Efectivo",
+            "Nequi / Daviplata",
+            "Datáfono"
+          ],
+          "description": "Método de pago seleccionado."
+        },
+        "cashTenderCop": {
+          "type": "number",
+          "description": "Monto con el que paga en efectivo para llevar devuelta (0 si no aplica)."
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280,
+          "description": "Indicaciones adicionales."
+        },
+        "items": {
+          "type": "array",
+          "description": "Lista acotada de productos incluidos en el pedido."
+        },
+        "subtotalCop": {
+          "type": "number",
+          "description": "Subtotal de productos en COP."
+        },
+        "deliveryFeeCop": {
+          "type": "number",
+          "description": "Valor del domicilio en COP."
+        },
+        "totalCop": {
+          "type": "number",
+          "description": "Total final a pagar en COP."
+        },
+        "cogsCop": {
+          "type": "number",
+          "description": "Costo de mercancía vendida (COGS) en COP."
+        },
+        "dateKey": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha contable Colombia YYYY-MM-DD."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pendiente", "Confirmado", "En camino", "Entregado", "Cancelado"],
+          "description": "Estado del pedido."
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["App PWA", "POS / WhatsApp"],
+          "description": "Canal de origen del pedido."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal del servidor al crear la orden."
+        }
+      },
+      "required": [
+        "userId",
+        "isGuest",
+        "customerName",
+        "phone",
+        "address",
+        "neighborhood",
+        "referencePoint",
+        "paymentMethod",
+        "cashTenderCop",
+        "notes",
+        "items",
+        "subtotalCop",
+        "deliveryFeeCop",
+        "totalCop",
+        "status",
+        "origin",
+        "createdAt"
+      ]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Compra de mercancía a proveedores registrada desde /admin.",
+      "type": "object",
+      "properties": {
+        "supplierName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nombre del proveedor."
+        },
+        "invoiceNumber": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Número de factura o remisión."
+        },
+        "paymentSource": {
+          "type": "string",
+          "enum": ["Caja Efectivo", "Transferencia / Banco"],
+          "description": "Fuente de pago de la compra."
+        },
+        "items": {
+          "type": "array",
+          "description": "Productos comprados con cantidad y costo unitario."
+        },
+        "totalCostCop": {
+          "type": "number",
+          "description": "Costo total de la compra en COP."
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280,
+          "description": "Observaciones adicionales."
+        },
+        "dateKey": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha contable YYYY-MM-DD."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del administrador."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal del servidor."
+        }
+      },
+      "required": [
+        "supplierName",
+        "invoiceNumber",
+        "paymentSource",
+        "items",
+        "totalCostCop",
+        "notes",
+        "dateKey",
+        "createdBy",
+        "createdAt"
+      ]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Gasto operativo diario del negocio.",
+      "type": "object",
+      "properties": {
+        "concept": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Descripción o concepto del gasto."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Domiciliarios / Gasolina",
+            "Hielo y Bolsas",
+            "Servicios / Arriendo",
+            "Nómina / Turnos",
+            "Otros"
+          ],
+          "description": "Categoría operativa del gasto."
+        },
+        "amountCop": {
+          "type": "number",
+          "description": "Monto del gasto en COP."
+        },
+        "paymentSource": {
+          "type": "string",
+          "enum": ["Efectivo de caja", "Nequi / Banco"],
+          "description": "Fuente de dinero utilizada."
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280,
+          "description": "Notas adicionales."
+        },
+        "dateKey": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha contable YYYY-MM-DD."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del administrador."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal del servidor."
+        }
+      },
+      "required": [
+        "concept",
+        "category",
+        "amountCop",
+        "paymentSource",
+        "notes",
+        "dateKey",
+        "createdBy",
+        "createdAt"
+      ]
+    },
+    "DailyStats": {
+      "title": "DailyStats",
+      "description": "Agregado diario atómico de ventas, COGS, compras y gastos para reportes de bajas lecturas.",
+      "type": "object",
+      "properties": {
+        "dateKey": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha YYYY-MM-DD."
+        },
+        "salesTotalCop": { "type": "number" },
+        "salesCashCop": { "type": "number" },
+        "salesNequiCop": { "type": "number" },
+        "salesCardCop": { "type": "number" },
+        "cogsTotalCop": { "type": "number" },
+        "purchasesTotalCop": { "type": "number" },
+        "purchasesCashCop": { "type": "number" },
+        "purchasesBankCop": { "type": "number" },
+        "expensesTotalCop": { "type": "number" },
+        "expensesCashCop": { "type": "number" },
+        "expensesBankCop": { "type": "number" },
+        "ordersCount": { "type": "number" },
+        "purchasesCount": { "type": "number" },
+        "expensesCount": { "type": "number" },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "dateKey",
+        "salesTotalCop",
+        "salesCashCop",
+        "salesNequiCop",
+        "salesCardCop",
+        "cogsTotalCop",
+        "purchasesTotalCop",
+        "purchasesCashCop",
+        "purchasesBankCop",
+        "expensesTotalCop",
+        "expensesCashCop",
+        "expensesBankCop",
+        "ordersCount",
+        "purchasesCount",
+        "expensesCount",
+        "updatedAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil del cliente guardado en la colección users.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del propietario."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Correo electrónico normalizado."
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nombre completo del cliente."
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "Celular / WhatsApp."
+        },
+        "address": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Dirección exacta."
+        },
+        "neighborhood": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100,
+          "description": "Barrio."
+        },
+        "referencePoint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Punto de referencia."
+        },
+        "preferredPayment": {
+          "type": "string",
+          "enum": [
+            "Nequi / Daviplata (Transferencia)",
+            "Efectivo contraentrega",
+            "Datáfono contraentrega"
+          ],
+          "description": "Método de pago preferido."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["customer", "admin"],
+          "description": "Rol asignado en la aplicación."
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "description": "Marca booleana de administrador."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Última actualización."
+        }
+      },
+      "required": [
+        "userId",
+        "fullName",
+        "phone",
+        "address",
+        "neighborhood",
+        "referencePoint",
+        "preferredPayment",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/settings/store": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Documento único de configuración y catalogVersion."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Catálogo paginado de productos."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Órdenes de domicilio App PWA y ventas POS / WhatsApp."
+    },
+    "/purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/Purchase" },
+      "description": "Historial de compras a proveedores (solo administrador)."
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Registro de gastos operativos (solo administrador)."
+    },
+    "/daily_stats/{dateKey}": {
+      "schema": { "$ref": "#/entities/DailyStats" },
+      "description": "Agregados diarios atómicos para reportes financieros y arqueo de caja."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Perfil privado del cliente con aislamiento estricto por propietario."
+    }
+  }
+}

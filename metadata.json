@@ -1,0 +1,6 @@
+{
+  "name": "El Bodegón del Licor",
+  "description": "PWA de domicilios de licores, cervezas, combos, snacks y cigarrillos 24/7 en Colombia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
