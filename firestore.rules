@@ -52,7 +52,7 @@ service cloud.firestore {
         data.keys().hasOnly([
           'catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop',
           'transferNequi', 'transferDaviplata', 'transferBancolombiaKey', 'transferHolderName',
-          'storeLat', 'storeLng', 'maxDeliveryKm', 'allowedNeighborhoods',
+          'storeLat', 'storeLng', 'maxDeliveryKm', 'defaultCity',
           'updatedAt'
         ]) &&
         data.catalogVersion is int && data.catalogVersion >= 1 && data.catalogVersion <= 1000000 &&
@@ -66,11 +66,7 @@ service cloud.firestore {
         (!('storeLat' in data) || (data.storeLat is number && data.storeLat >= -90 && data.storeLat <= 90)) &&
         (!('storeLng' in data) || (data.storeLng is number && data.storeLng >= -180 && data.storeLng <= 180)) &&
         (!('maxDeliveryKm' in data) || (data.maxDeliveryKm is number && data.maxDeliveryKm >= 0.1 && data.maxDeliveryKm <= 100)) &&
-        (!('allowedNeighborhoods' in data) || (
-          data.allowedNeighborhoods is list &&
-          data.allowedNeighborhoods.size() <= 60 &&
-          (data.allowedNeighborhoods.size() == 0 || (data.allowedNeighborhoods[0] is string && data.allowedNeighborhoods[0].size() <= 100))
-        )) &&
+        (!('defaultCity' in data) || (data.defaultCity is string && data.defaultCity.size() >= 1 && data.defaultCity.size() <= 100)) &&
         data.updatedAt is timestamp;
     }
 

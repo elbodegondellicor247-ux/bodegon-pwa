@@ -127,14 +127,6 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
     const parsedLng = Number(data.storeLng);
     const parsedMaxKm = Number(data.maxDeliveryKm);
 
-    const parsedNeighborhoods = Array.isArray(data.allowedNeighborhoods)
-      ? data.allowedNeighborhoods
-          .filter((item): item is string => typeof item === 'string')
-          .map((item) => item.trim().slice(0, 100))
-          .filter((item) => item.length > 0)
-          .slice(0, 60)
-      : DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
-
     return {
       catalogVersion: Number.isFinite(parsedVersion) && parsedVersion >= 1 ? parsedVersion : 1,
       storeOpen: data.storeOpen !== false,
@@ -190,7 +182,10 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
         parsedMaxKm <= 100
           ? parsedMaxKm
           : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
-      allowedNeighborhoods: parsedNeighborhoods,
+      defaultCity:
+        typeof data.defaultCity === 'string' && data.defaultCity.trim()
+          ? data.defaultCity.trim().slice(0, 100)
+          : DEFAULT_STORE_SETTINGS.defaultCity,
     };
   } catch (error) {
     // Offline fallback to cached settings if available

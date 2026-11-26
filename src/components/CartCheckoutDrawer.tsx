@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Minus,
   Plus,
+  Search,
   ShoppingBag,
   Trash2,
   X,
@@ -21,6 +22,7 @@ import { formatCop, makeCartKey } from '../lib/format';
 import {
   buildSpecialDeliveryWhatsAppUrl,
   calculateCityDistanceKm,
+  geocodeAddressWithNominatim,
 } from '../lib/geo';
 import {
   createOrderAndWhatsApp,
@@ -38,6 +40,7 @@ import {
   type PaymentMethod,
   type StoreSettings,
 } from '../types/store';
+import { LeafletCoverageMap } from './LeafletCoverageMap';
 import { OrderTrackingView } from './OrderTrackingView';
 
 interface ConfirmedOrderSummary extends CreateOrderResult {
@@ -102,47 +105,66 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<ConfirmedOrderSummary | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<
-    'idle' | 'loading' | 'ok' | 'out_of_range' | 'error'
-  >('idle');
-  const [gpsDistanceKm, setGpsDistanceKm] = useState<number | null>(null);
-  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [gpsError, setGpsError] = useState('');
-  const [selectedNeighborhoodOption, setSelectedNeighborhoodOption] = useState('');
+  const [coverageStatus, setCoverageStatus] = useState<
+    'unverified' | 'searching' | 'verified_ok' | 'out_of_range' | 'not_found' | 'gps_error'
+  >('unverified');
+  const [coverageSource, setCoverageSource] = useState<'none' | 'nominatim' | 'gps' | 'pin'>('none');
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [customerCoords, setCustomerCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coverageHint, setCoverageHint] = useState('');
+  const lastGeocodedAddressRef = useRef('');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const errorBannerRef = useRef<HTMLDivElement | null>(null);
 
-  const OTHER_NEIGHBORHOOD_VALUE = '__OTHER__';
-  const allowedNeighborhoods = storeSettings?.allowedNeighborhoods ?? DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
+  const storeLat =
+    typeof storeSettings?.storeLat === 'number' && Number.isFinite(storeSettings.storeLat)
+      ? storeSettings.storeLat
+      : DEFAULT_STORE_SETTINGS.storeLat;
+  const storeLng =
+    typeof storeSettings?.storeLng === 'number' && Number.isFinite(storeSettings.storeLng)
+      ? storeSettings.storeLng
+      : DEFAULT_STORE_SETTINGS.storeLng;
+  const maxDeliveryKm =
+    typeof storeSettings?.maxDeliveryKm === 'number' &&
+    Number.isFinite(storeSettings.maxDeliveryKm) &&
+    storeSettings.maxDeliveryKm >= 0.1
+      ? storeSettings.maxDeliveryKm
+      : DEFAULT_STORE_SETTINGS.maxDeliveryKm;
+  const defaultCity =
+    typeof storeSettings?.defaultCity === 'string' && storeSettings.defaultCity.trim()
+      ? storeSettings.defaultCity.trim()
+      : DEFAULT_STORE_SETTINGS.defaultCity;
+
+  const evaluateCoordinates = useCallback(
+    (coords: { lat: number; lng: number }, source: 'nominatim' | 'gps' | 'pin') => {
+      const distKm = calculateCityDistanceKm(storeLat, storeLng, coords.lat, coords.lng);
+      setCustomerCoords(coords);
+      setDistanceKm(distKm);
+      setCoverageSource(source);
+      setCoverageHint('');
+      setFormError('');
+      setCoverageStatus(distKm <= maxDeliveryKm ? 'verified_ok' : 'out_of_range');
+    },
+    [storeLat, storeLng, maxDeliveryKm]
+  );
+
+  const handleCustomerPinChange = useCallback(
+    (coords: { lat: number; lng: number }) => {
+      evaluateCoordinates(coords, 'pin');
+    },
+    [evaluateCoordinates]
+  );
 
   useEffect(() => {
     if (isOpen && step === 'cart') {
       setCustomerName(profile?.fullName || user?.displayName || '');
       setPhone(profile?.phone || '');
       setAddress(profile?.address || '');
-      const savedBarrio = (profile?.neighborhood || '').trim();
-      if (allowedNeighborhoods.length > 0) {
-        const matched = allowedNeighborhoods.find(
-          (b) => b.toLowerCase() === savedBarrio.toLowerCase()
-        );
-        if (matched) {
-          setSelectedNeighborhoodOption(matched);
-          setNeighborhood(matched);
-        } else if (savedBarrio) {
-          setSelectedNeighborhoodOption(OTHER_NEIGHBORHOOD_VALUE);
-          setNeighborhood(savedBarrio);
-        } else {
-          setSelectedNeighborhoodOption('');
-          setNeighborhood('');
-        }
-      } else {
-        setSelectedNeighborhoodOption('');
-        setNeighborhood(savedBarrio);
-      }
+      setNeighborhood((profile?.neighborhood || '').trim());
       setReferencePoint(profile?.referencePoint || '');
       setPaymentMethod(normalizeCustomerPaymentMethod(profile?.preferredPayment));
     }
-  }, [isOpen, profile, user, step, allowedNeighborhoods]);
+  }, [isOpen, profile, user, step]);
 
   useEffect(() => {
     if (isOpen && scrollContainerRef.current) {
@@ -218,73 +240,93 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     }, 2000);
   };
 
-  const storeLat =
-    typeof storeSettings?.storeLat === 'number' && Number.isFinite(storeSettings.storeLat)
-      ? storeSettings.storeLat
-      : DEFAULT_STORE_SETTINGS.storeLat;
-  const storeLng =
-    typeof storeSettings?.storeLng === 'number' && Number.isFinite(storeSettings.storeLng)
-      ? storeSettings.storeLng
-      : DEFAULT_STORE_SETTINGS.storeLng;
-  const maxDeliveryKm =
-    typeof storeSettings?.maxDeliveryKm === 'number' &&
-    Number.isFinite(storeSettings.maxDeliveryKm) &&
-    storeSettings.maxDeliveryKm >= 0.1
-      ? storeSettings.maxDeliveryKm
-      : DEFAULT_STORE_SETTINGS.maxDeliveryKm;
-
-  const isOutOfRange = gpsStatus === 'out_of_range';
-  const isOtherNeighborhoodBlocked =
-    allowedNeighborhoods.length > 0 &&
-    selectedNeighborhoodOption === OTHER_NEIGHBORHOOD_VALUE &&
-    gpsStatus !== 'ok';
-  const isCoverageBlocked = isOutOfRange || isOtherNeighborhoodBlocked;
+  const isOutOfRange = coverageStatus === 'out_of_range';
+  const isVerifiedOk = coverageStatus === 'verified_ok';
 
   const specialDeliveryWhatsAppUrl = buildSpecialDeliveryWhatsAppUrl({
     customerName,
     phone,
     address,
-    neighborhood:
-      selectedNeighborhoodOption && selectedNeighborhoodOption !== OTHER_NEIGHBORHOOD_VALUE
-        ? selectedNeighborhoodOption
-        : neighborhood,
-    distanceKm: gpsDistanceKm,
+    neighborhood,
+    distanceKm,
     maxDeliveryKm,
-    coords: gpsCoords,
+    coords: customerCoords,
     items: safeCartItems,
     subtotalCop: safeSubtotal,
   });
 
-  const handleValidateGpsCoverage = () => {
-    setFormError('');
-    setGpsError('');
-    if (!navigator.geolocation) {
-      setGpsStatus('error');
-      setGpsError(
-        'Tu navegador no permite validar GPS. Selecciona tu barrio abajo o cotiza por WhatsApp.'
+  const handleVerifyAddress = async (trigger: 'button' | 'blur') => {
+    const cleanAddress = address.trim();
+    if (trigger === 'blur') {
+      if (
+        cleanAddress.length < 5 ||
+        lastGeocodedAddressRef.current === cleanAddress ||
+        coverageStatus === 'searching' ||
+        coverageSource === 'gps' ||
+        coverageSource === 'pin'
+      ) {
+        return;
+      }
+    } else if (cleanAddress.length < 4) {
+      setCoverageHint(
+        'Escribe tu dirección completa (ej. "Calle 17 # 10 - 25") para ubicarla en el mapa.'
       );
       return;
     }
 
-    setGpsStatus('loading');
+    lastGeocodedAddressRef.current = cleanAddress;
+    setCoverageStatus('searching');
+    setCoverageHint('');
+    setFormError('');
+
+    try {
+      const found = await geocodeAddressWithNominatim(cleanAddress, defaultCity);
+      if (!found) {
+        setCoverageStatus('not_found');
+        setDistanceKm(null);
+        setCoverageHint(
+          'No encontramos esa dirección exacta. Escribe la intersección principal (ej. "Calle 17 con Carrera 10") o toca y arrastra el pin en el mapa.'
+        );
+        return;
+      }
+      evaluateCoordinates({ lat: found.lat, lng: found.lng }, 'nominatim');
+    } catch {
+      setCoverageStatus('not_found');
+      setDistanceKm(null);
+      setCoverageHint(
+        'No pudimos consultar OpenStreetMap en este momento. Usa "📍 Usar mi GPS actual" o toca tu ubicación en el mapa.'
+      );
+    }
+  };
+
+  const handleValidateGpsCoverage = () => {
+    setFormError('');
+    setCoverageHint('');
+    if (!navigator.geolocation) {
+      setCoverageStatus('gps_error');
+      setCoverageHint(
+        'Tu navegador no permite usar GPS. Verifica tu dirección escrita o toca tu ubicación en el mapa.'
+      );
+      return;
+    }
+
+    setCoverageStatus('searching');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        const distKm = calculateCityDistanceKm(storeLat, storeLng, lat, lng);
-        setGpsCoords({ lat, lng });
-        setGpsDistanceKm(distKm);
-        setGpsStatus(distKm <= maxDeliveryKm ? 'ok' : 'out_of_range');
+        evaluateCoordinates(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          'gps'
+        );
       },
       (err) => {
-        setGpsStatus('error');
+        setCoverageStatus('gps_error');
         if (err.code === err.PERMISSION_DENIED) {
-          setGpsError(
-            'Permiso de ubicación denegado. Actívalo en tu navegador o selecciona tu barrio en la lista.'
+          setCoverageHint(
+            'Permiso de GPS denegado. Verifica tu dirección escrita o mueve el pin manualmente en el mapa.'
           );
         } else {
-          setGpsError(
-            'No pudimos obtener tu ubicación GPS en este momento. Selecciona tu barrio en la lista o cotiza por WhatsApp.'
+          setCoverageHint(
+            'No pudimos obtener tu GPS en este momento. Verifica tu dirección escrita o toca el mapa.'
           );
         }
       },
@@ -349,13 +391,13 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     }
     if (isOutOfRange) {
       setFormError(
-        `Tu ubicación está a ${gpsDistanceKm?.toFixed(1) ?? ''} km y supera nuestra cobertura normal de ${maxDeliveryKm} km. Usa el botón de WhatsApp para cotizar domicilio especial.`
+        `Estás a ${distanceKm?.toFixed(1) ?? ''} km (máximo ${maxDeliveryKm} km). Usa el botón de WhatsApp para cotizar domicilio especial.`
       );
       return;
     }
-    if (isOtherNeighborhoodBlocked) {
+    if (!isVerifiedOk || !customerCoords) {
       setFormError(
-        'Para un barrio fuera de la lista, valida tu cobertura con GPS o cotiza tu domicilio especial por WhatsApp.'
+        'Verifica tu dirección o ubica tu pin en el mapa antes de confirmar el pedido.'
       );
       return;
     }
@@ -365,17 +407,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     }
 
     const resolvedNeighborhood =
-      selectedNeighborhoodOption && selectedNeighborhoodOption !== OTHER_NEIGHBORHOOD_VALUE
-        ? selectedNeighborhoodOption.trim()
-        : neighborhood.trim() ||
-          (gpsStatus === 'ok' && gpsDistanceKm !== null
-            ? `Zona GPS (${gpsDistanceKm.toFixed(1)} km)`
-            : '');
-
-    if (resolvedNeighborhood.length < 2) {
-      setFormError('Selecciona tu barrio de la lista o valida tu cobertura por GPS.');
-      return;
-    }
+      neighborhood.trim().length >= 2
+        ? neighborhood.trim().slice(0, SCHEMA_LIMITS.NEIGHBORHOOD_MAX)
+        : defaultCity.slice(0, SCHEMA_LIMITS.NEIGHBORHOOD_MAX) || 'Referencia en mapa';
 
     const snapshotItems = safeCartItems.map((item) => ({ ...item }));
     const snapshotOrderItems: OrderItem[] = snapshotItems.map((ci) => ({
@@ -394,11 +428,11 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     const cleanAddress = address.trim();
     const cleanNeighborhood = resolvedNeighborhood;
     const cleanRef = referencePoint.trim();
-    const gpsNoteSuffix =
-      gpsCoords && gpsDistanceKm !== null
-        ? ` [GPS: ${gpsDistanceKm.toFixed(1)} km · https://maps.google.com/?q=${gpsCoords.lat.toFixed(5)},${gpsCoords.lng.toFixed(5)}]`
+    const mapNoteSuffix =
+      customerCoords && distanceKm !== null
+        ? ` [Mapa: ${distanceKm.toFixed(1)} km · https://maps.google.com/?q=${customerCoords.lat.toFixed(5)},${customerCoords.lng.toFixed(5)}]`
         : '';
-    const cleanNotes = `${notes.trim()}${gpsNoteSuffix}`.trim().slice(0, SCHEMA_LIMITS.NOTES_MAX);
+    const cleanNotes = `${notes.trim()}${mapNoteSuffix}`.trim().slice(0, SCHEMA_LIMITS.NOTES_MAX);
     const cleanLast4 = receiptLast4.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4);
 
     setIsSubmitting(true);
@@ -475,10 +509,12 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     setStep('cart');
     setFormError('');
     setReceiptLast4('');
-    setGpsStatus('idle');
-    setGpsDistanceKm(null);
-    setGpsCoords(null);
-    setGpsError('');
+    setCoverageStatus('unverified');
+    setCoverageSource('none');
+    setDistanceKm(null);
+    setCustomerCoords(null);
+    setCoverageHint('');
+    lastGeocodedAddressRef.current = '';
     onClose();
   };
 
@@ -698,54 +734,81 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                  Dirección exacta *
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-[#072146]/80">
+                  Dirección exacta * ({defaultCity})
                 </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={SCHEMA_LIMITS.ADDRESS_MAX}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  onFocus={handleFieldFocus}
-                  placeholder="Ej. Calle 45 # 18-32 Apto 401"
-                  className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
-                />
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    required
+                    maxLength={SCHEMA_LIMITS.ADDRESS_MAX}
+                    value={address}
+                    onChange={(e) => {
+                      const nextVal = e.target.value;
+                      setAddress(nextVal);
+                      lastGeocodedAddressRef.current = '';
+                      if (coverageSource === 'nominatim') {
+                        setCoverageStatus('unverified');
+                        setDistanceKm(null);
+                        setCoverageSource('none');
+                      }
+                    }}
+                    onBlur={() => void handleVerifyAddress('blur')}
+                    onFocus={handleFieldFocus}
+                    placeholder="Ej. Calle 17 # 10 - 25"
+                    className="flex-1 min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={coverageStatus === 'searching'}
+                    onClick={() => void handleVerifyAddress('button')}
+                    className="min-h-[44px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#072146] px-4 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] disabled:opacity-60 transition shrink-0"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    {coverageStatus === 'searching' ? 'Buscando...' : '🔍 Verificar dirección'}
+                  </button>
+                </div>
               </div>
 
-              {/* Validación gratuita de cobertura por GPS o barrio */}
-              <div className="rounded-2xl border border-[#1B4F9C]/20 bg-[#F4F6F9] p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+              {/* Mapa interactivo gratuito OpenStreetMap + GPS alternativo */}
+              <div className="rounded-2xl border border-[#1B4F9C]/20 bg-[#F4F6F9] p-3.5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-extrabold text-[#072146] inline-flex items-center gap-1.5">
                     <MapPin className="h-4 w-4 text-[#1B4F9C]" />
-                    Validación de cobertura (hasta {maxDeliveryKm} km)
+                    Mapa de cobertura (hasta {maxDeliveryKm} km)
                   </span>
+                  <button
+                    type="button"
+                    disabled={coverageStatus === 'searching'}
+                    onClick={handleValidateGpsCoverage}
+                    className="min-h-[36px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-xs font-extrabold text-[#1B4F9C] hover:bg-[#1B4F9C]/10 disabled:opacity-60 transition"
+                  >
+                    📍 Usar mi GPS actual
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={gpsStatus === 'loading'}
-                  onClick={handleValidateGpsCoverage}
-                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#1B4F9C] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-[#072146] disabled:opacity-60 transition"
-                >
-                  {gpsStatus === 'loading'
-                    ? 'Obteniendo ubicación GPS...'
-                    : '📍 Validar cobertura con mi ubicación GPS'}
-                </button>
+                <LeafletCoverageMap
+                  storeLat={storeLat}
+                  storeLng={storeLng}
+                  maxDeliveryKm={maxDeliveryKm}
+                  customerCoords={customerCoords}
+                  isOutOfRange={isOutOfRange}
+                  onCustomerPinChange={handleCustomerPinChange}
+                />
 
-                {gpsStatus === 'ok' && gpsDistanceKm !== null && (
+                {coverageStatus === 'verified_ok' && distanceKm !== null && (
                   <div className="rounded-xl bg-[#128C4A]/15 border border-[#128C4A]/35 px-3 py-2 text-xs font-extrabold text-[#128C4A]">
-                    ✅ Estás dentro de nuestra zona de entrega (a {gpsDistanceKm.toFixed(1)} km)
+                    ✅ Cobertura confirmada (a {distanceKm.toFixed(1)} km de la tienda)
                   </div>
                 )}
 
-                {gpsStatus === 'out_of_range' && gpsDistanceKm !== null && (
+                {coverageStatus === 'out_of_range' && distanceKm !== null && (
                   <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 p-3 space-y-2.5">
                     <p className="text-xs font-extrabold text-[#C62828] flex items-start gap-1.5">
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                       <span>
-                        🚫 Estás a {gpsDistanceKm.toFixed(1)} km. Nuestra cobertura normal es hasta {maxDeliveryKm} km
+                        🚫 Estás a {distanceKm.toFixed(1)} km (máximo {maxDeliveryKm} km)
                       </span>
                     </p>
                     <a
@@ -760,9 +823,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   </div>
                 )}
 
-                {gpsStatus === 'error' && gpsError && (
+                {(coverageStatus === 'not_found' || coverageStatus === 'gps_error' || coverageHint) && (
                   <div className="rounded-xl bg-[#F5A623]/20 border border-[#F5A623]/50 px-3 py-2 text-xs font-bold text-[#072146]">
-                    {gpsError}
+                    {coverageHint}
                   </div>
                 )}
               </div>
@@ -770,50 +833,17 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                    Barrio / Zona *
+                    Barrio o conjunto (referencia)
                   </label>
-                  {allowedNeighborhoods.length > 0 ? (
-                    <select
-                      required
-                      value={selectedNeighborhoodOption}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedNeighborhoodOption(val);
-                        if (val !== OTHER_NEIGHBORHOOD_VALUE) {
-                          setNeighborhood(val);
-                        } else if (
-                          allowedNeighborhoods.some(
-                            (b) => b.toLowerCase() === neighborhood.toLowerCase()
-                          )
-                        ) {
-                          setNeighborhood('');
-                        }
-                      }}
-                      onFocus={handleFieldFocus}
-                      className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 bg-white px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
-                    >
-                      <option value="">Selecciona tu barrio...</option>
-                      {allowedNeighborhoods.map((barrio) => (
-                        <option key={barrio} value={barrio}>
-                          {barrio}
-                        </option>
-                      ))}
-                      <option value={OTHER_NEIGHBORHOOD_VALUE}>
-                        Otro barrio -&gt; Consultar por WhatsApp
-                      </option>
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      required
-                      maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
-                      value={neighborhood}
-                      onChange={(e) => setNeighborhood(e.target.value)}
-                      onFocus={handleFieldFocus}
-                      placeholder="Ej. Suba / Colina / Cedritos"
-                      className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
-                    />
-                  )}
+                  <input
+                    type="text"
+                    maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
+                    value={neighborhood}
+                    onChange={(e) => setNeighborhood(e.target.value)}
+                    onFocus={handleFieldFocus}
+                    placeholder="Ej. Conjunto Mirador / Cedritos"
+                    className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-[#072146]/80 mb-1">
@@ -830,42 +860,6 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   />
                 </div>
               </div>
-
-              {allowedNeighborhoods.length > 0 &&
-                selectedNeighborhoodOption === OTHER_NEIGHBORHOOD_VALUE && (
-                  <div className="rounded-xl border border-[#F5A623]/50 bg-[#F5A623]/15 p-3 space-y-2.5">
-                    <div>
-                      <label className="block text-xs font-bold text-[#072146] mb-1">
-                        ¿Cuál es tu barrio o sector?
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
-                        value={neighborhood}
-                        onChange={(e) => setNeighborhood(e.target.value)}
-                        onFocus={handleFieldFocus}
-                        placeholder="Escribe el nombre de tu barrio"
-                        className="w-full min-h-[42px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
-                      />
-                    </div>
-                    {gpsStatus !== 'ok' && (
-                      <>
-                        <p className="text-xs font-bold text-[#072146]">
-                          Este barrio no está en la lista automática. Valida tu distancia por GPS arriba o cotiza un domicilio especial por WhatsApp:
-                        </p>
-                        <a
-                          href={specialDeliveryWhatsAppUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-2 text-xs font-extrabold text-white hover:brightness-110 transition"
-                        >
-                          <MessageCircle className="h-4 w-4" />
-                          📲 Cotizar domicilio especial por WhatsApp
-                        </a>
-                      </>
-                    )}
-                  </div>
-                )}
 
               {/* Pago anticipado 100% por transferencia */}
               <div className="rounded-2xl bg-[#072146] p-4 text-white space-y-3">
@@ -1071,12 +1065,10 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   ⚠️ Importante: Para despachar tu pedido debes transferir el total y enviar el mensaje de la orden junto con la foto del comprobante a nuestro WhatsApp.
                 </div>
 
-                {isCoverageBlocked && (
+                {isOutOfRange && distanceKm !== null && (
                   <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 p-3 space-y-2">
                     <p className="text-xs font-extrabold text-[#C62828]">
-                      {isOutOfRange && gpsDistanceKm !== null
-                        ? `🚫 Estás a ${gpsDistanceKm.toFixed(1)} km. Nuestra cobertura normal es hasta ${maxDeliveryKm} km.`
-                        : '🚫 Barrio por confirmar cobertura. Valida con GPS o cotiza tu domicilio especial por WhatsApp.'}
+                      🚫 Estás a {distanceKm.toFixed(1)} km (máximo {maxDeliveryKm} km).
                     </p>
                     <a
                       href={specialDeliveryWhatsAppUrl}
@@ -1092,15 +1084,17 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
                 <button
                   type="button"
-                  disabled={isSubmitting || isCoverageBlocked}
+                  disabled={isSubmitting || !isVerifiedOk}
                   onClick={() => void processOrderSubmission()}
                   className="w-full min-h-[48px] rounded-xl bg-[#F5A623] px-5 py-3 text-sm font-extrabold text-[#072146] hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
                   {isSubmitting
                     ? 'Procesando pedido...'
-                    : isCoverageBlocked
+                    : isOutOfRange
                       ? 'Fuera de cobertura normal'
-                      : 'Confirmar Pedido'}
+                      : !isVerifiedOk
+                        ? 'Verifica tu dirección para continuar'
+                        : 'Confirmar Pedido'}
                 </button>
               </div>
             </form>

@@ -12,15 +12,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   storeLat: 4.741,
   storeLng: -74.084,
   maxDeliveryKm: 5,
-  allowedNeighborhoods: [
-    'Suba',
-    'Colina Campestre',
-    'Mazurén',
-    'Niza',
-    'Cedritos',
-    'Usaquén',
-    'Chapinero',
-  ],
+  defaultCity: 'Bogotá, Colombia',
 };
 
 const IMG_BEER = '/src/assets/images/beer_sixpack_studio_1795561817621.jpg';

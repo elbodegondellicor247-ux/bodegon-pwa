@@ -68,7 +68,7 @@ export interface StoreSettings {
   storeLat: number;
   storeLng: number;
   maxDeliveryKm: number;
-  allowedNeighborhoods: string[];
+  defaultCity: string;
 }
 
 export interface CartItem {
@@ -254,4 +254,5 @@ export const SCHEMA_LIMITS = {
   CONCEPT_MAX: 140,
   RECEIPT_LAST4_MAX: 4,
   TRANSFER_FIELD_MAX: 80,
+  DEFAULT_CITY_MAX: 100,
 };

@@ -23,7 +23,6 @@ import {
   Smartphone,
   Trash2,
   Truck,
-  X,
 } from 'lucide-react';
 import {
   signInWithEmailAndPassword,
@@ -136,7 +135,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   const [pendingPublish, setPendingPublish] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<StoreSettings>(storeSettings);
   const [newPinDraft, setNewPinDraft] = useState('');
-  const [newNeighborhoodDraft, setNewNeighborhoodDraft] = useState('');
   const [locatingStoreGps, setLocatingStoreGps] = useState(false);
 
   // Product editor state
@@ -439,38 +437,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }
   };
 
-  const handleAddNeighborhood = () => {
-    const clean = newNeighborhoodDraft.trim().slice(0, 100);
-    if (!clean) return;
-    const current = Array.isArray(settingsDraft.allowedNeighborhoods)
-      ? settingsDraft.allowedNeighborhoods
-      : [];
-    if (current.length >= 60) {
-      setErrorBanner('Máximo 60 barrios habilitados permitidos.');
-      return;
-    }
-    const exists = current.some((n) => n.toLowerCase() === clean.toLowerCase());
-    if (exists) {
-      setNewNeighborhoodDraft('');
-      return;
-    }
-    setSettingsDraft({
-      ...settingsDraft,
-      allowedNeighborhoods: [...current, clean],
-    });
-    setNewNeighborhoodDraft('');
-  };
-
-  const handleRemoveNeighborhood = (target: string) => {
-    const current = Array.isArray(settingsDraft.allowedNeighborhoods)
-      ? settingsDraft.allowedNeighborhoods
-      : [];
-    setSettingsDraft({
-      ...settingsDraft,
-      allowedNeighborhoods: current.filter((n) => n !== target),
-    });
-  };
-
   const handleCaptureStoreGps = () => {
     if (!navigator.geolocation) {
       setErrorBanner('Este navegador no soporta geolocalización GPS.');
@@ -502,6 +468,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     const lat = Number(settingsDraft.storeLat);
     const lng = Number(settingsDraft.storeLng);
     const maxKm = Number(settingsDraft.maxDeliveryKm);
+    const cleanCity = (settingsDraft.defaultCity || '').trim().slice(0, 100);
+    if (cleanCity.length < 2) {
+      setErrorBanner('Ingresa la ciudad por defecto (ej. Bogotá, Colombia).');
+      return;
+    }
     if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
       setErrorBanner('La latitud del local debe estar entre -90 y 90 (ej. 4.7410).');
       return;
@@ -515,29 +486,16 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       return;
     }
 
-    const currentNeighborhoods = Array.isArray(settingsDraft.allowedNeighborhoods)
-      ? [...settingsDraft.allowedNeighborhoods]
-      : [];
-    const pendingBarrio = newNeighborhoodDraft.trim().slice(0, 100);
-    if (
-      pendingBarrio &&
-      currentNeighborhoods.length < 60 &&
-      !currentNeighborhoods.some((n) => n.toLowerCase() === pendingBarrio.toLowerCase())
-    ) {
-      currentNeighborhoods.push(pendingBarrio);
-      setNewNeighborhoodDraft('');
-    }
-
     setBusy(true);
     setNotice('');
     setErrorBanner('');
     try {
       const next: StoreSettings = {
         ...settingsDraft,
+        defaultCity: cleanCity,
         storeLat: Number(lat.toFixed(6)),
         storeLng: Number(lng.toFixed(6)),
         maxDeliveryKm: Number(maxKm.toFixed(2)),
-        allowedNeighborhoods: currentNeighborhoods,
         catalogVersion: settingsDraft.catalogVersion + 1,
       };
       await updateStoreSettingsAdmin(next);
@@ -1769,59 +1727,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                     </div>
                   </div>
 
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-1.5 pt-1">
                     <label className="block text-xs font-bold text-[#072146]/80">
-                      Barrios / Zonas habilitadas ({(settingsDraft.allowedNeighborhoods || []).length})
+                      Ciudad por defecto (defaultCity)
                     </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        maxLength={100}
-                        value={newNeighborhoodDraft}
-                        onChange={(e) => setNewNeighborhoodDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddNeighborhood();
-                          }
-                        }}
-                        placeholder="Ej. Colina Campestre, Suba, Cedritos..."
-                        className="flex-1 min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddNeighborhood}
-                        className="min-h-[40px] inline-flex items-center gap-1 rounded-xl bg-[#1B4F9C] px-3.5 text-xs font-bold text-white hover:bg-[#072146] transition shrink-0"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Agregar
-                      </button>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {(settingsDraft.allowedNeighborhoods || []).length === 0 ? (
-                        <p className="text-[11px] text-[#072146]/60">
-                          Sin barrios cargados. Agrega barrios o los clientes usarán validación GPS.
-                        </p>
-                      ) : (
-                        (settingsDraft.allowedNeighborhoods || []).map((barrio) => (
-                          <span
-                            key={barrio}
-                            className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-[#1B4F9C]/20 px-2.5 py-1 text-xs font-bold text-[#072146]"
-                          >
-                            <span>{barrio}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveNeighborhood(barrio)}
-                              className="rounded-md p-0.5 text-[#C62828]/80 hover:bg-[#C62828]/10 hover:text-[#C62828] transition"
-                              aria-label={`Quitar barrio ${barrio}`}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </span>
-                        ))
-                      )}
-                    </div>
+                    <input
+                      type="text"
+                      maxLength={100}
+                      value={settingsDraft.defaultCity ?? ''}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          defaultCity: e.target.value,
+                        })
+                      }
+                      placeholder="Bogotá, Colombia"
+                      className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                    />
+                    <p className="text-[11px] text-[#072146]/65">
+                      Se agrega automáticamente a las búsquedas de OpenStreetMap (Nominatim) para ubicar las direcciones de tus clientes con precisión.
+                    </p>
                   </div>
                 </div>
 

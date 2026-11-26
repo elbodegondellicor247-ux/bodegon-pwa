@@ -57,9 +57,11 @@
           "type": "number",
           "description": "Radio máximo de cobertura estándar en kilómetros."
         },
-        "allowedNeighborhoods": {
-          "type": "array",
-          "description": "Lista editable de barrios o zonas habilitadas para entrega estándar."
+        "defaultCity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Ciudad por defecto para dar contexto a las búsquedas gratuitas en OpenStreetMap Nominatim (ej. Bogotá, Colombia)."
         },
         "updatedAt": {
           "type": "string",

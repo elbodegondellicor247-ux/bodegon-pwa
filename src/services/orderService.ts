@@ -891,15 +891,10 @@ function buildSanitizedStoreSettingsDoc(settings: StoreSettings, catalogVersion:
   const lat = Number(settings.storeLat);
   const lng = Number(settings.storeLng);
   const maxKm = Number(settings.maxDeliveryKm);
-  const sanitizedNeighborhoods = Array.isArray(settings.allowedNeighborhoods)
-    ? Array.from(
-        new Set(
-          settings.allowedNeighborhoods
-            .map((n) => sanitizeText(String(n), SCHEMA_LIMITS.NEIGHBORHOOD_MAX))
-            .filter((n) => n.length > 0)
-        )
-      ).slice(0, 60)
-    : DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
+  const cleanCity = sanitizeText(
+    settings.defaultCity || DEFAULT_STORE_SETTINGS.defaultCity,
+    SCHEMA_LIMITS.DEFAULT_CITY_MAX
+  );
 
   return {
     catalogVersion: Math.max(1, Math.floor(catalogVersion)),
@@ -934,7 +929,7 @@ function buildSanitizedStoreSettingsDoc(settings: StoreSettings, catalogVersion:
       Number.isFinite(maxKm) && maxKm >= 0.1 && maxKm <= 100
         ? Number(maxKm.toFixed(2))
         : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
-    allowedNeighborhoods: sanitizedNeighborhoods,
+    defaultCity: cleanCity || DEFAULT_STORE_SETTINGS.defaultCity,
     updatedAt: serverTimestamp(),
   };
 }
