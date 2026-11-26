@@ -68,13 +68,15 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   onOpenAuthModal,
 }) => {
   const [step, setStep] = useState<'cart' | 'checkout' | 'confirmed'>('cart');
-  const [customerName, setCustomerName] = useState(profile.fullName);
-  const [phone, setPhone] = useState(profile.phone);
-  const [address, setAddress] = useState(profile.address);
-  const [neighborhood, setNeighborhood] = useState(profile.neighborhood);
-  const [referencePoint, setReferencePoint] = useState(profile.referencePoint);
+  const [customerName, setCustomerName] = useState(
+    profile?.fullName || user?.displayName || ''
+  );
+  const [phone, setPhone] = useState(profile?.phone || '');
+  const [address, setAddress] = useState(profile?.address || '');
+  const [neighborhood, setNeighborhood] = useState(profile?.neighborhood || '');
+  const [referencePoint, setReferencePoint] = useState(profile?.referencePoint || '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
-    profile.preferredPayment || 'Nequi / Daviplata (Transferencia)'
+    profile?.preferredPayment || 'Nequi / Daviplata (Transferencia)'
   );
   const [cashTenderInput, setCashTenderInput] = useState('');
   const [notes, setNotes] = useState('');
@@ -82,15 +84,16 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<ConfirmedOrderSummary | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isOpen && step !== 'confirmed') {
-      setCustomerName(profile.fullName || user?.displayName || '');
-      setPhone(profile.phone || '');
-      setAddress(profile.address || '');
-      setNeighborhood(profile.neighborhood || '');
-      setReferencePoint(profile.referencePoint || '');
-      setPaymentMethod(profile.preferredPayment || 'Nequi / Daviplata (Transferencia)');
+      setCustomerName(profile?.fullName || user?.displayName || '');
+      setPhone(profile?.phone || '');
+      setAddress(profile?.address || '');
+      setNeighborhood(profile?.neighborhood || '');
+      setReferencePoint(profile?.referencePoint || '');
+      setPaymentMethod(profile?.preferredPayment || 'Nequi / Daviplata (Transferencia)');
     }
   }, [isOpen, profile, user, step]);
 
@@ -102,18 +105,39 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
   if (!isOpen) return null;
 
-  const subtotalCop = cartItems.reduce(
-    (sum, item) => sum + item.product.priceCop * item.qty,
-    0
-  );
+  const safeCartItems = Array.isArray(cartItems) ? cartItems : [];
+
+  const subtotalCop = safeCartItems.reduce((sum, item) => {
+    const price = Number(item?.product?.priceCop) || 0;
+    const qty = Number(item?.qty) || 0;
+    return sum + price * qty;
+  }, 0);
+
+  const rawDeliveryFee = storeSettings?.deliveryFeeCop;
+  const deliveryFee =
+    rawDeliveryFee === undefined ||
+    rawDeliveryFee === null ||
+    Number.isNaN(Number(rawDeliveryFee))
+      ? 4000
+      : Math.max(0, Number(rawDeliveryFee) || 0);
+
+  const rawFreeThreshold = storeSettings?.freeDeliveryMinCop;
+  const freeDeliveryThreshold =
+    rawFreeThreshold === undefined ||
+    rawFreeThreshold === null ||
+    Number.isNaN(Number(rawFreeThreshold))
+      ? 120000
+      : Math.max(0, Number(rawFreeThreshold) || 0);
+
+  const safeSubtotal = Number(subtotalCop) || 0;
   const isFreeDelivery =
-    subtotalCop >= storeSettings.freeDeliveryMinCop && subtotalCop > 0;
+    freeDeliveryThreshold > 0 && safeSubtotal >= freeDeliveryThreshold && safeSubtotal > 0;
   const deliveryFeeCop =
-    cartItems.length === 0 || isFreeDelivery ? 0 : storeSettings.deliveryFeeCop;
-  const totalCop = subtotalCop + deliveryFeeCop;
+    safeCartItems.length === 0 || isFreeDelivery ? 0 : deliveryFee;
+  const totalCop = (Number(safeSubtotal) || 0) + (Number(deliveryFeeCop) || 0);
   const remainingForFree = Math.max(
     0,
-    storeSettings.freeDeliveryMinCop - subtotalCop
+    (Number(freeDeliveryThreshold) || 0) - safeSubtotal
   );
 
   const parsedCashTender = Number(cashTenderInput.replace(/\D/g, '')) || 0;
@@ -127,8 +151,6 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 260);
   };
-
-  const errorBannerRef = useRef<HTMLDivElement | null>(null);
 
   const mapCheckoutError = (err: unknown): string => {
     const raw = err instanceof Error ? err.message : String(err);
@@ -162,7 +184,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     if (isSubmitting) return;
     setFormError('');
 
-    if (cartItems.length === 0) {
+    if (safeCartItems.length === 0) {
       setFormError('Agrega al menos un producto para continuar.');
       return;
     }
@@ -191,7 +213,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       return;
     }
 
-    const snapshotItems = cartItems.map((item) => ({ ...item }));
+    const snapshotItems = safeCartItems.map((item) => ({ ...item }));
     const snapshotSubtotal = subtotalCop;
     const snapshotDeliveryFee = deliveryFeeCop;
     const cleanName = customerName.trim();
@@ -339,20 +361,23 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     Resumen del pedido
                   </p>
                   {receipt.items.map((item) => {
-                    const tempKey = item.product.supportsColdOption
+                    const tempKey = item.product?.supportsColdOption
                       ? item.temperature
                       : 'N/A';
+                    const lineTotal =
+                      (Number(item?.product?.priceCop) || 0) * (Number(item?.qty) || 0);
                     return (
                       <div
                         key={makeCartKey(item.product.id, tempKey)}
                         className="flex items-start justify-between gap-2 text-xs text-[#072146]"
                       >
                         <span className="min-w-0 flex-1">
-                          <strong>{item.qty}x</strong> {item.product.name} ({item.product.presentation})
-                          {item.product.supportsColdOption ? ` · ${item.temperature}` : ''}
+                          <strong>{Number(item?.qty) || 0}x</strong> {item.product?.name} (
+                          {item.product?.presentation})
+                          {item.product?.supportsColdOption ? ` · ${item.temperature}` : ''}
                         </span>
                         <span className="font-bold tabular-nums shrink-0">
-                          {formatCop(item.product.priceCop * item.qty)}
+                          {formatCop(lineTotal)}
                         </span>
                       </div>
                     );
@@ -409,7 +434,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 Volver al catálogo
               </button>
             </div>
-          ) : cartItems.length === 0 ? (
+          ) : safeCartItems.length === 0 ? (
             <div className="py-12 text-center space-y-3">
               {formError && (
                 <div className="mb-4 rounded-xl bg-[#C62828]/10 border border-[#C62828]/30 px-3.5 py-2.5 text-left text-xs font-bold text-[#C62828]">
@@ -445,7 +470,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
               </div>
 
               <div className="space-y-2.5">
-                {cartItems.map((item) => {
+                {safeCartItems.map((item) => {
                   const tempKey = item.product.supportsColdOption
                     ? item.temperature
                     : 'N/A';
@@ -464,7 +489,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                           {item.product.supportsColdOption && ` · ${item.temperature}`}
                         </p>
                         <p className="mt-1 text-sm font-extrabold text-[#072146] tabular-nums">
-                          {formatCop(item.product.priceCop * item.qty)}
+                          {formatCop(
+                            (Number(item?.product?.priceCop) || 0) * (Number(item?.qty) || 0)
+                          )}
                         </p>
                       </div>
 
@@ -660,7 +687,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     value={cashTenderInput}
                     onChange={(e) => setCashTenderInput(e.target.value)}
                     onFocus={handleFieldFocus}
-                    placeholder={`Ej. ${Math.ceil(totalCop / 50000) * 50000}`}
+                    placeholder={`Ej. ${Math.max(50000, Math.ceil((Number(totalCop) || 0) / 50000) * 50000)}`}
                     className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 bg-white px-3 text-base sm:text-sm text-[#072146] tabular-nums focus:border-[#1B4F9C] focus:outline-none"
                   />
                   {parsedCashTender >= totalCop && parsedCashTender > 0 && (
@@ -728,7 +755,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
           )}
         </div>
 
-        {step === 'cart' && cartItems.length > 0 && (
+        {step === 'cart' && safeCartItems.length > 0 && (
           <div className="shrink-0 border-t border-[#1B4F9C]/15 bg-white p-4 sm:px-6 space-y-3">
             <div className="space-y-1 text-sm">
               <div className="flex justify-between text-[#072146]/75">

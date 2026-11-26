@@ -3,18 +3,20 @@ import { AlertTriangle, RotateCcw } from 'lucide-react';
 
 interface State {
   hasError: boolean;
+  error: Error | null;
   message: string;
 }
 
 export class ErrorBoundary extends React.Component<{ children: React.ReactNode }, State> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
-    this.state = { hasError: false, message: '' };
+    this.state = { hasError: false, error: null, message: '' };
   }
 
   static getDerivedStateFromError(error: Error): State {
     return {
       hasError: true,
+      error,
       message: error?.message || 'Ocurrió un error inesperado.',
     };
   }
@@ -25,6 +27,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 
   render() {
     if (this.state.hasError) {
+      const diagnosticText = this.state.error?.message || this.state.message;
       return (
         <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-sm border border-[#1B4F9C]/20 text-center">
@@ -37,6 +40,11 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
             <p className="mt-2 text-sm text-[#072146]/75 break-words">
               Verifica tu conexión o recarga la página para continuar con tu pedido.
             </p>
+            {diagnosticText && (
+              <div className="mt-3 rounded-xl bg-[#F4F6F9] border border-[#1B4F9C]/15 px-3 py-2 text-left text-[11px] font-mono text-[#C62828] break-all">
+                {diagnosticText}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => window.location.reload()}

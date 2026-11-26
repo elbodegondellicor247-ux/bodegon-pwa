@@ -100,12 +100,25 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
     if (!snap.exists()) {
       return DEFAULT_STORE_SETTINGS;
     }
-    const data = snap.data();
+    const data = snap.data() ?? {};
+    const parsedDelivery = Number(data.deliveryFeeCop);
+    const parsedFree = Number(data.freeDeliveryMinCop);
+    const parsedVersion = Number(data.catalogVersion);
     return {
-      catalogVersion: Number(data.catalogVersion ?? 1),
+      catalogVersion: Number.isFinite(parsedVersion) && parsedVersion >= 1 ? parsedVersion : 1,
       storeOpen: data.storeOpen !== false,
-      deliveryFeeCop: Number(data.deliveryFeeCop ?? DEFAULT_STORE_SETTINGS.deliveryFeeCop),
-      freeDeliveryMinCop: Number(data.freeDeliveryMinCop ?? DEFAULT_STORE_SETTINGS.freeDeliveryMinCop),
+      deliveryFeeCop:
+        data.deliveryFeeCop !== undefined &&
+        data.deliveryFeeCop !== null &&
+        Number.isFinite(parsedDelivery)
+          ? Math.max(0, parsedDelivery)
+          : DEFAULT_STORE_SETTINGS.deliveryFeeCop,
+      freeDeliveryMinCop:
+        data.freeDeliveryMinCop !== undefined &&
+        data.freeDeliveryMinCop !== null &&
+        Number.isFinite(parsedFree)
+          ? Math.max(0, parsedFree)
+          : DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
     };
   } catch (error) {
     // Offline fallback to cached settings if available

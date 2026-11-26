@@ -1,9 +1,15 @@
-export function formatCop(amount: number): string {
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    maximumFractionDigits: 0,
-  }).format(amount);
+export function formatCop(amount: unknown): string {
+  const num = Number(amount);
+  const safeAmount = Number.isFinite(num) ? num : 0;
+  try {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      maximumFractionDigits: 0,
+    }).format(safeAmount);
+  } catch {
+    return `$ ${(Math.round(safeAmount) || 0).toLocaleString('es-CO')}`;
+  }
 }
 
 export function sanitizeText(value: string, maxLength: number): string {
