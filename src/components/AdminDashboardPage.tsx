@@ -19,6 +19,7 @@ import {
   Rocket,
   Shield,
   ShoppingBag,
+  Smartphone,
   Trash2,
   Truck,
 } from 'lucide-react';
@@ -70,6 +71,12 @@ interface AdminDashboardPageProps {
 const PIN_STORAGE_KEY = 'bodegon_admin_pin_v1';
 const DEFAULT_ADMIN_PIN = '2470';
 
+interface ScreenWakeLockSentinel {
+  released?: boolean;
+  release: () => Promise<void>;
+  addEventListener?: (type: string, listener: () => void) => void;
+}
+
 function getStoredAdminPin(): string {
   try {
     return localStorage.getItem(PIN_STORAGE_KEY) || DEFAULT_ADMIN_PIN;
@@ -101,6 +108,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   );
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [shiftModeWanted, setShiftModeWanted] = useState(false);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const wakeLockRef = useRef<ScreenWakeLockSentinel | null>(null);
   const [notice, setNotice] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
   const [busy, setBusy] = useState(false);
@@ -208,6 +218,77 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }, 3000);
     return () => window.clearInterval(intervalId);
   }, [effectiveIsAdmin, pinUnlocked, soundEnabled, pendingCount]);
+
+  // Screen Wake Lock API ("Modo Turno") con re-adquisición al volver a la pestaña
+  useEffect(() => {
+    const releaseSentinel = async () => {
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+        } catch {
+          // Ignore release errors
+        }
+        wakeLockRef.current = null;
+      }
+      setWakeLockActive(false);
+    };
+
+    if (!effectiveIsAdmin || !pinUnlocked || !shiftModeWanted) {
+      void releaseSentinel();
+      return;
+    }
+
+    let cancelled = false;
+    const requestScreenLock = async () => {
+      const nav = navigator as Navigator & {
+        wakeLock?: { request: (type: 'screen') => Promise<ScreenWakeLockSentinel> };
+      };
+      if (!nav.wakeLock || typeof nav.wakeLock.request !== 'function') {
+        setNotice(
+          '📱 Modo Turno: este navegador no soporta bloqueo automático de pantalla. Mantén la pantalla encendida en ajustes del celular.'
+        );
+        setShiftModeWanted(false);
+        setWakeLockActive(false);
+        return;
+      }
+      try {
+        const sentinel = await nav.wakeLock.request('screen');
+        if (cancelled) {
+          void sentinel.release().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = sentinel;
+        setWakeLockActive(true);
+        sentinel.addEventListener?.('release', () => {
+          wakeLockRef.current = null;
+          setWakeLockActive(false);
+        });
+      } catch {
+        if (!cancelled) {
+          setWakeLockActive(false);
+          setShiftModeWanted(false);
+          setErrorBanner(
+            'No se pudo bloquear el apagado de pantalla en este navegador o modo ahorro de batería.'
+          );
+        }
+      }
+    };
+
+    void requestScreenLock();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !wakeLockRef.current && shiftModeWanted) {
+        void requestScreenLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      void releaseSentinel();
+    };
+  }, [effectiveIsAdmin, pinUnlocked, shiftModeWanted]);
 
   const loadInventory = async () => {
     setLoadingProducts(true);
@@ -675,6 +756,20 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }
   };
 
+  const handleToggleShiftMode = () => {
+    setErrorBanner('');
+    if (shiftModeWanted) {
+      setShiftModeWanted(false);
+      setNotice('Modo Turno desactivado: la pantalla volverá a su suspensión normal.');
+    } else {
+      unlockAudioContext();
+      setAudioUnlocked(true);
+      setSoundEnabled(true);
+      setShiftModeWanted(true);
+      setNotice('📱 Modo Turno activado: pantalla encendida mientras esté abierto /admin.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F4F6F9] text-[#072146]">
       {/* Top Admin Header */}
@@ -728,6 +823,24 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 {!audioUnlocked || !soundEnabled
                   ? '🔔 Activar Alarma Sonora 24/7'
                   : '🔔 Alarma 24/7 Activa'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleToggleShiftMode}
+              className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-extrabold transition whitespace-nowrap ${
+                wakeLockActive || shiftModeWanted
+                  ? 'bg-[#128C4A] text-white ring-2 ring-[#F5A623]'
+                  : 'border border-white/25 bg-white/10 text-white hover:bg-white/20'
+              }`}
+              title="Evitar que la pantalla del celular se apague durante el turno"
+            >
+              <Smartphone className="h-4 w-4 text-[#F5A623] shrink-0" />
+              <span>
+                {wakeLockActive
+                  ? '📱 Modo Turno Activo (Pantalla Encendida)'
+                  : '📱 Mantener pantalla encendida (Modo Turno)'}
               </span>
             </button>
 

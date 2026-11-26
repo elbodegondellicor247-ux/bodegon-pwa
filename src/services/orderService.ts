@@ -163,9 +163,7 @@ export function buildWhatsAppOrderUrl(params: {
   totalCop: number;
 }): string {
   const lines: string[] = [
-    '*EL BODEGÓN DEL LICOR (24/7)*',
-    `Orden #${params.orderId}`,
-    'Origen: App PWA · Pago Anticipado',
+    `Hola El Bodegón del Licor 🍻, envío mi *PEDIDO #${params.orderId}* y adjunto el *COMPROBANTE DE PAGO*:`,
     '',
     '*Productos:*',
     ...params.items.map((item) => {
@@ -177,7 +175,7 @@ export function buildWhatsAppOrderUrl(params: {
     '',
     `Subtotal: ${formatCop(params.subtotalCop)}`,
     `Domicilio: ${params.deliveryFeeCop === 0 ? 'GRATIS' : formatCop(params.deliveryFeeCop)}`,
-    `*TOTAL PAGADO: ${formatCop(params.totalCop)}*`,
+    `*TOTAL A PAGAR / TRANSFERIDO: ${formatCop(params.totalCop)}*`,
     '',
     '*Datos de entrega:*',
     `Cliente: ${params.customerName}`,
@@ -190,11 +188,11 @@ export function buildWhatsAppOrderUrl(params: {
     lines.push(`Punto de referencia: ${params.referencePoint.trim()}`);
   }
 
-  lines.push(`Transferencia: ${params.paymentMethod}`);
+  lines.push(`Medio de transferencia: ${params.paymentMethod}`);
   if (params.receiptLast4?.trim()) {
     lines.push(`Ref. comprobante (últ. 4 dígitos): ${params.receiptLast4.trim()}`);
   }
-  lines.push('📎 Adjunto comprobante de transferencia.');
+  lines.push('📎 *Adjunto foto del comprobante de pago.*');
 
   if (params.notes.trim()) {
     lines.push(`Notas: ${params.notes.trim()}`);

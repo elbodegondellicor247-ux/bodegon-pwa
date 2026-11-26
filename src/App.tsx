@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Package, SearchX, X } from 'lucide-react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
@@ -23,6 +23,7 @@ import {
   filterCachedProducts,
   getAllCachedProducts,
   loadCategoryPage,
+  PAGE_SIZE,
   searchFirestoreProducts,
 } from './services/catalogService';
 import {
@@ -91,9 +92,10 @@ export default function App() {
   const [profile, setProfile] = useState<CustomerProfile>(loadSavedProfile);
 
   const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
-  const [settingsReady, setSettingsReady] = useState(false);
+  const storeSettingsRef = useRef<StoreSettings>(DEFAULT_STORE_SETTINGS);
 
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('Todo');
+  const selectedCategoryRef = useRef<ProductCategory>('Todo');
   const [products, setProducts] = useState<Product[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [lastProductId, setLastProductId] = useState<string | null>(null);
@@ -186,50 +188,90 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Read single settings/store doc on boot to verify catalogVersion
+  // Keep refs updated for parallel background settings refresh
   useEffect(() => {
-    let active = true;
-    fetchStoreSettings()
-      .then((settings) => {
-        if (active) {
-          setStoreSettings(settings);
-          setSettingsReady(true);
-        }
-      })
-      .catch(() => {
-        if (active) setSettingsReady(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    storeSettingsRef.current = storeSettings;
+  }, [storeSettings]);
 
-  // Load initial 12 products for active category (using localStorage cache if catalogVersion & 10m TTL valid)
+  useEffect(() => {
+    selectedCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
+
+  // Load initial 12 products for active category immediately (guaranteed <=5s resolution via try/catch/finally)
   const loadInitialCategory = useCallback(
-    async (category: ProductCategory, settings: StoreSettings, forceRefresh = false) => {
-      setIsLoadingPage(true);
+    async (
+      category: ProductCategory,
+      settings: StoreSettings,
+      forceRefresh = false,
+      silent = false
+    ) => {
+      if (!silent) {
+        setIsLoadingPage(true);
+      }
+
+      let timeoutId: number | undefined;
       try {
-        const res = await loadCategoryPage({
-          category,
-          storeSettings: settings,
-          lastProductId: null,
-          existingItems: [],
-          forceRefresh,
-        });
+        const res = await Promise.race([
+          loadCategoryPage({
+            category,
+            storeSettings: settings,
+            lastProductId: null,
+            existingItems: [],
+            forceRefresh,
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutId = window.setTimeout(() => {
+              reject(new Error('Tiempo máximo de espera (5s) alcanzado'));
+            }, 5000);
+          }),
+        ]);
         setProducts(res.items);
         setHasMore(res.hasMore);
         setLastProductId(res.lastProductId);
+      } catch {
+        const fallback =
+          category === 'Todo'
+            ? COLOMBIAN_TEST_CATALOG.slice(0, PAGE_SIZE)
+            : COLOMBIAN_TEST_CATALOG.filter((p) => p.category === category).slice(0, PAGE_SIZE);
+        setProducts((prev) => (prev.length > 0 ? prev : fallback));
+        setHasMore(false);
+        setLastProductId(fallback.at(-1)?.id ?? null);
       } finally {
-        setIsLoadingPage(false);
+        if (timeoutId !== undefined) {
+          window.clearTimeout(timeoutId);
+        }
+        if (!silent) {
+          setIsLoadingPage(false);
+        }
       }
     },
     []
   );
 
+  // Query products immediately on mount & category switches without waiting for settings/store
   useEffect(() => {
-    if (!settingsReady) return;
-    loadInitialCategory(selectedCategory, storeSettings);
-  }, [settingsReady, selectedCategory, storeSettings, loadInitialCategory]);
+    void loadInitialCategory(selectedCategory, storeSettingsRef.current);
+  }, [selectedCategory, loadInitialCategory]);
+
+  // Read settings/store in parallel on boot; if catalogVersion differs, silently sync active category
+  useEffect(() => {
+    let active = true;
+    fetchStoreSettings()
+      .then((settings) => {
+        if (!active) return;
+        setStoreSettings(settings);
+        storeSettingsRef.current = settings;
+        if (settings.catalogVersion !== DEFAULT_STORE_SETTINGS.catalogVersion) {
+          void loadInitialCategory(selectedCategoryRef.current, settings, false, true);
+        }
+      })
+      .catch(() => {
+        // Keep DEFAULT_STORE_SETTINGS fallback silently
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadInitialCategory]);
 
   // Persist cart
   useEffect(() => {
@@ -539,7 +581,7 @@ export default function App() {
               Licores, cervezas frías y combos a domicilio 24/7
             </h1>
             <p className="mt-1 text-xs sm:text-sm text-white/80">
-              Entrega rápida en toda la ciudad · Pago anticipado por Nequi, Daviplata o Bancolombia
+              Entrega rápida en toda la ciudad · Pago por transferencia Nequi, Daviplata o Bre-B
             </p>
           </div>
           <div className="shrink-0 text-left sm:text-right">
@@ -701,6 +743,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 sm:p-5">
               <OrderTrackingView
                 orderId={trackingOrderId}
+                storeSettings={storeSettings}
                 onClose={() => setTrackingOrderId(null)}
                 closeLabel="Volver a la tienda"
               />

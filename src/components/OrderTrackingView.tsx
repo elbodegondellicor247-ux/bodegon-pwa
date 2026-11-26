@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   MessageCircle,
   PackageCheck,
   ShieldCheck,
@@ -9,10 +11,17 @@ import {
   Volume2,
   XCircle,
 } from 'lucide-react';
+import { DEFAULT_STORE_SETTINGS } from '../data/colombianCatalog';
 import { playCustomerConfirmedChime, unlockAudioContext } from '../lib/audio';
 import { formatCop, makeCartKey } from '../lib/format';
 import { buildWhatsAppOrderUrl, subscribeOrderById } from '../services/orderService';
-import type { AnyOrderPaymentMethod, OrderItem, OrderRecord, OrderStatus } from '../types/store';
+import type {
+  AnyOrderPaymentMethod,
+  OrderItem,
+  OrderRecord,
+  OrderStatus,
+  StoreSettings,
+} from '../types/store';
 
 export interface TrackingFallbackSummary {
   customerName: string;
@@ -33,12 +42,13 @@ export interface TrackingFallbackSummary {
 interface OrderTrackingViewProps {
   orderId: string;
   initialSummary?: TrackingFallbackSummary;
+  storeSettings?: StoreSettings;
   onClose?: () => void;
   closeLabel?: string;
 }
 
 const PROGRESS_STEPS: { status: OrderStatus; label: string }[] = [
-  { status: 'Pendiente', label: 'Verificando pago' },
+  { status: 'Pendiente', label: 'Pendiente de Pago' },
   { status: 'Confirmado', label: 'Pago confirmado' },
   { status: 'En camino', label: 'En camino' },
   { status: 'Entregado', label: 'Entregado' },
@@ -47,6 +57,7 @@ const PROGRESS_STEPS: { status: OrderStatus; label: string }[] = [
 export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
   orderId,
   initialSummary,
+  storeSettings,
   onClose,
   closeLabel = 'Volver al catálogo',
 }) => {
@@ -54,6 +65,7 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [listenError, setListenError] = useState(false);
   const [audioNotice, setAudioNotice] = useState(false);
+  const [copiedInline, setCopiedInline] = useState(false);
   const prevStatusRef = useRef<OrderStatus | null>(null);
 
   useEffect(() => {
@@ -144,6 +156,35 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
 
   const currentStepIndex = PROGRESS_STEPS.findIndex((s) => s.status === effectiveStatus);
 
+  const nequiDisplay =
+    storeSettings?.transferNequi?.trim() || DEFAULT_STORE_SETTINGS.transferNequi;
+  const daviplataDisplay =
+    storeSettings?.transferDaviplata?.trim() || DEFAULT_STORE_SETTINGS.transferDaviplata;
+  const bancolombiaDisplay = storeSettings?.transferBancolombiaKey?.trim() || '';
+  const sameNequiDaviplata =
+    nequiDisplay.replace(/\s+/g, '') === daviplataDisplay.replace(/\s+/g, '');
+
+  const handleCopyTransferNumber = async (rawValue: string) => {
+    const compact = rawValue.replace(/\s+/g, '');
+    try {
+      await navigator.clipboard.writeText(compact);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = compact;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+    setCopiedInline(true);
+    window.setTimeout(() => setCopiedInline(false), 2000);
+  };
+
   const handleEnableSound = () => {
     unlockAudioContext();
     setAudioNotice(true);
@@ -154,21 +195,83 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
     <div className="rounded-2xl bg-[#F4F6F9] p-4 sm:p-5 border border-[#1B4F9C]/15 space-y-4">
       {/* Live Status Banner */}
       {effectiveStatus === 'Pendiente' && (
-        <div className="rounded-2xl border-2 border-[#F5A623] bg-[#F5A623]/15 p-4 text-center space-y-2.5">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F5A623] text-[#072146] animate-pulse">
-            <Clock className="h-6 w-6" />
+        <>
+          <div className="rounded-2xl border-2 border-[#F5A623] bg-[#F5A623]/15 p-4 text-center space-y-2.5">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F5A623] text-[#072146] animate-pulse">
+              <Clock className="h-6 w-6" />
+            </div>
+            <div className="inline-flex items-center justify-center rounded-lg bg-[#F5A623] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-[#072146]">
+              ⏳ Pedido Recibido · Pendiente de Pago
+            </div>
+            <p className="text-xs font-extrabold uppercase tracking-wider text-[#1B4F9C]">
+              Orden #{shortOrderCode} · En vivo
+            </p>
+            <h3 className="font-display text-lg font-extrabold text-[#072146]">
+              ⚠️ ¡Pedido reservado! Falta 1 paso para enviarlo
+            </h3>
+            <p className="text-xs font-medium text-[#072146]/85">
+              Tu orden queda sujeta a cancelación si no recibimos tu mensaje y pago en los próximos 15 minutos
+            </p>
           </div>
-          <p className="text-xs font-extrabold uppercase tracking-wider text-[#1B4F9C]">
-            Orden #{shortOrderCode} · En vivo
-          </p>
-          <h3 className="font-display text-lg font-extrabold text-[#072146]">
-            ⏳ Verificando transferencia y esperando confirmación de tienda...
-          </h3>
-          <p className="text-xs text-[#072146]/80">
-            Envíanos tu comprobante por WhatsApp para validar tu pago de inmediato. Esta pantalla se
-            actualizará automáticamente cuando la tienda confirme.
-          </p>
-        </div>
+
+          <div className="rounded-2xl bg-white border border-[#F5A623]/60 p-4 space-y-3 text-left shadow-xs">
+            <div className="space-y-2">
+              <p className="text-xs sm:text-sm font-bold text-[#072146] leading-relaxed">
+                1. Realiza la transferencia exacta (
+                <span className="font-extrabold text-[#1B4F9C] tabular-nums">
+                  {displayData ? formatCop(displayData.totalCop) : 'Total del pedido'}
+                </span>
+                ) a Nequi o Daviplata:{' '}
+                <strong className="font-display text-sm text-[#072146] tabular-nums">
+                  {sameNequiDaviplata
+                    ? nequiDisplay
+                    : `Nequi ${nequiDisplay} · Daviplata ${daviplataDisplay}`}
+                </strong>
+                {bancolombiaDisplay ? ` · Bre-B/Bancolombia: ${bancolombiaDisplay}` : ''}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleCopyTransferNumber(nequiDisplay)}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#072146] px-3.5 py-1.5 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
+              >
+                {copiedInline ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    ¡Número copiado!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    Copiar número {nequiDisplay}
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="border-t border-[#F4F6F9] pt-2.5">
+              <p className="text-xs sm:text-sm font-bold text-[#072146] leading-relaxed">
+                2. Toca el botón verde abajo: se abrirá nuestro WhatsApp con tu pedido ya escrito. Presiona ENVIAR y adjunta la FOTO DEL COMPROBANTE de pago.
+              </p>
+            </div>
+          </div>
+
+          <div
+            role="alert"
+            className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 px-3.5 py-2.5 text-xs font-extrabold text-[#C62828] text-center"
+          >
+            🚫 Sin el envío del pedido y el pantallazo del pago por WhatsApp, tu domicilio NO será entregado.
+          </div>
+
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full min-h-[54px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
+          >
+            <MessageCircle className="h-5 w-5 shrink-0" />
+            📲 Enviar Pedido y Comprobante por WhatsApp
+          </a>
+        </>
       )}
 
       {effectiveStatus === 'Confirmado' && (
@@ -180,7 +283,7 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
             Orden #{shortOrderCode}
           </p>
           <h3 className="font-display text-lg sm:text-xl font-extrabold">
-            ✅ ¡Pago y Pedido Confirmado! Estamos alistando tu pedido
+            ✅ ¡Pago Confirmado! Preparando tu entrega
           </h3>
           <p className="text-xs text-white/90">
             Tu transferencia fue aprobada. En minutos saldrá nuestro domiciliario.
@@ -354,18 +457,18 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
         </div>
       ) : null}
 
-      {/* WhatsApp native anchor */}
-      <a
-        href={whatsappUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="w-full min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
-      >
-        <MessageCircle className="h-5 w-5 shrink-0" />
-        {effectiveStatus === 'Pendiente'
-          ? '📎 Enviar comprobante por WhatsApp'
-          : 'Escribir por WhatsApp a la tienda'}
-      </a>
+      {/* WhatsApp native anchor for non-pending states (Pending already renders prominent primary CTA above) */}
+      {effectiveStatus !== 'Pendiente' && (
+        <a
+          href={whatsappUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
+        >
+          <MessageCircle className="h-5 w-5 shrink-0" />
+          Escribir por WhatsApp a la tienda
+        </a>
+      )}
 
       {onClose && (
         <button

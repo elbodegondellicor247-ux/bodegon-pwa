@@ -16,7 +16,24 @@ import type { Product, ProductCategory, StoreSettings } from '../types/store';
 
 export const PAGE_SIZE = 12;
 export const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const FIRESTORE_FETCH_TIMEOUT_MS = 5000;
 const CACHE_STORAGE_KEY = 'bodegon_catalog_cache_v1';
+
+async function withTimeout<T>(promise: Promise<T>, ms = FIRESTORE_FETCH_TIMEOUT_MS): Promise<T> {
+  let timerId: number | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = window.setTimeout(() => {
+      reject(new Error(`Timeout tras ${ms}ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timerId !== undefined) {
+      window.clearTimeout(timerId);
+    }
+  }
+}
 
 interface CategoryCacheEntry {
   items: Product[];
@@ -96,7 +113,7 @@ export function getAllCachedProducts(): Product[] {
 export async function fetchStoreSettings(): Promise<StoreSettings> {
   try {
     const ref = doc(db, 'settings', 'store');
-    const snap = await getDoc(ref);
+    const snap = await withTimeout(getDoc(ref), FIRESTORE_FETCH_TIMEOUT_MS);
     if (!snap.exists()) {
       return DEFAULT_STORE_SETTINGS;
     }
@@ -233,7 +250,7 @@ export async function loadCategoryPage(params: {
     ];
 
     const q = query(productsRef, ...constraints);
-    const snap = await getDocs(q);
+    const snap = await withTimeout(getDocs(q), FIRESTORE_FETCH_TIMEOUT_MS);
 
     if (snap.empty && !lastProductId) {
       // Check if Todo also empty (unseeded DB) vs legitimately empty category
@@ -366,7 +383,7 @@ export async function searchFirestoreProducts(term: string): Promise<Product[]> 
       where('searchLower', '<=', `${normalized}\uf8ff`),
       limit(PAGE_SIZE)
     );
-    const snap = await getDocs(q);
+    const snap = await withTimeout(getDocs(q), FIRESTORE_FETCH_TIMEOUT_MS);
     return snap.docs.map(mapDocToProduct);
   } catch {
     // Graceful fallback if composite index on (active, searchLower) isn't provisioned yet

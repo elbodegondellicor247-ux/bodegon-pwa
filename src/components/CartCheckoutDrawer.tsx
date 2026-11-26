@@ -390,6 +390,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
             <OrderTrackingView
               orderId={receipt.orderId}
               initialSummary={receipt}
+              storeSettings={storeSettings}
               onClose={handleClose}
               closeLabel="Volver al catálogo"
             />
@@ -799,6 +800,13 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     <span>Total a transferir</span>
                     <span className="tabular-nums">{formatCop(totalCop)}</span>
                   </div>
+                </div>
+
+                <div
+                  role="note"
+                  className="rounded-xl border border-[#C62828]/35 bg-[#F5A623]/20 px-3.5 py-2.5 text-xs font-bold leading-relaxed text-[#072146]"
+                >
+                  ⚠️ Importante: Para despachar tu pedido debes transferir el total y enviar el mensaje de la orden junto con la foto del comprobante a nuestro WhatsApp.
                 </div>
 
                 <button
