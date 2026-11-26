@@ -9,6 +9,18 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   transferDaviplata: '304 3806922',
   transferBancolombiaKey: '',
   transferHolderName: 'El Bodegón del Licor',
+  storeLat: 4.741,
+  storeLng: -74.084,
+  maxDeliveryKm: 5,
+  allowedNeighborhoods: [
+    'Suba',
+    'Colina Campestre',
+    'Mazurén',
+    'Niza',
+    'Cedritos',
+    'Usaquén',
+    'Chapinero',
+  ],
 };
 
 const IMG_BEER = '/src/assets/images/beer_sixpack_studio_1795561817621.jpg';

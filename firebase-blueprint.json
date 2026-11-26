@@ -45,6 +45,22 @@
           "maxLength": 80,
           "description": "Nombre del titular de las cuentas receptoras."
         },
+        "storeLat": {
+          "type": "number",
+          "description": "Latitud geográfica del local para cálculo gratuito de distancia Haversine."
+        },
+        "storeLng": {
+          "type": "number",
+          "description": "Longitud geográfica del local para cálculo gratuito de distancia Haversine."
+        },
+        "maxDeliveryKm": {
+          "type": "number",
+          "description": "Radio máximo de cobertura estándar en kilómetros."
+        },
+        "allowedNeighborhoods": {
+          "type": "array",
+          "description": "Lista editable de barrios o zonas habilitadas para entrega estándar."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",

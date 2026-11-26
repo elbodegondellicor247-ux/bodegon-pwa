@@ -65,6 +65,10 @@ export interface StoreSettings {
   transferDaviplata: string;
   transferBancolombiaKey: string;
   transferHolderName: string;
+  storeLat: number;
+  storeLng: number;
+  maxDeliveryKm: number;
+  allowedNeighborhoods: string[];
 }
 
 export interface CartItem {

@@ -118,21 +118,35 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
       return DEFAULT_STORE_SETTINGS;
     }
     const data = snap.data() ?? {};
-    const parsedDelivery = Number(data.deliveryFeeCop);
-    const parsedFree = Number(data.freeDeliveryMinCop);
+    const rawDelivery = data.deliveryFeeCop ?? data.deliveryFee;
+    const rawFreeMin = data.freeDeliveryMinCop ?? data.freeDeliveryThreshold;
+    const parsedDelivery = Number(rawDelivery);
+    const parsedFree = Number(rawFreeMin);
     const parsedVersion = Number(data.catalogVersion);
+    const parsedLat = Number(data.storeLat);
+    const parsedLng = Number(data.storeLng);
+    const parsedMaxKm = Number(data.maxDeliveryKm);
+
+    const parsedNeighborhoods = Array.isArray(data.allowedNeighborhoods)
+      ? data.allowedNeighborhoods
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim().slice(0, 100))
+          .filter((item) => item.length > 0)
+          .slice(0, 60)
+      : DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
+
     return {
       catalogVersion: Number.isFinite(parsedVersion) && parsedVersion >= 1 ? parsedVersion : 1,
       storeOpen: data.storeOpen !== false,
       deliveryFeeCop:
-        data.deliveryFeeCop !== undefined &&
-        data.deliveryFeeCop !== null &&
+        rawDelivery !== undefined &&
+        rawDelivery !== null &&
         Number.isFinite(parsedDelivery)
           ? Math.max(0, parsedDelivery)
           : DEFAULT_STORE_SETTINGS.deliveryFeeCop,
       freeDeliveryMinCop:
-        data.freeDeliveryMinCop !== undefined &&
-        data.freeDeliveryMinCop !== null &&
+        rawFreeMin !== undefined &&
+        rawFreeMin !== null &&
         Number.isFinite(parsedFree)
           ? Math.max(0, parsedFree)
           : DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
@@ -152,12 +166,40 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
         typeof data.transferHolderName === 'string' && data.transferHolderName.trim()
           ? data.transferHolderName.trim()
           : DEFAULT_STORE_SETTINGS.transferHolderName,
+      storeLat:
+        data.storeLat !== undefined &&
+        data.storeLat !== null &&
+        Number.isFinite(parsedLat) &&
+        parsedLat >= -90 &&
+        parsedLat <= 90
+          ? parsedLat
+          : DEFAULT_STORE_SETTINGS.storeLat,
+      storeLng:
+        data.storeLng !== undefined &&
+        data.storeLng !== null &&
+        Number.isFinite(parsedLng) &&
+        parsedLng >= -180 &&
+        parsedLng <= 180
+          ? parsedLng
+          : DEFAULT_STORE_SETTINGS.storeLng,
+      maxDeliveryKm:
+        data.maxDeliveryKm !== undefined &&
+        data.maxDeliveryKm !== null &&
+        Number.isFinite(parsedMaxKm) &&
+        parsedMaxKm >= 0.1 &&
+        parsedMaxKm <= 100
+          ? parsedMaxKm
+          : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
+      allowedNeighborhoods: parsedNeighborhoods,
     };
   } catch (error) {
     // Offline fallback to cached settings if available
     const cached = readCatalogCache();
     if (cached?.storeSettings) {
-      return cached.storeSettings;
+      return {
+        ...DEFAULT_STORE_SETTINGS,
+        ...cached.storeSettings,
+      };
     }
     if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
       handleFirestoreError(error, OperationType.GET, 'settings/store');

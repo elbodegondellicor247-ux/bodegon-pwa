@@ -887,32 +887,65 @@ export async function adjustProductStockAdmin(productId: string, nextStock: numb
   }
 }
 
+function buildSanitizedStoreSettingsDoc(settings: StoreSettings, catalogVersion: number) {
+  const lat = Number(settings.storeLat);
+  const lng = Number(settings.storeLng);
+  const maxKm = Number(settings.maxDeliveryKm);
+  const sanitizedNeighborhoods = Array.isArray(settings.allowedNeighborhoods)
+    ? Array.from(
+        new Set(
+          settings.allowedNeighborhoods
+            .map((n) => sanitizeText(String(n), SCHEMA_LIMITS.NEIGHBORHOOD_MAX))
+            .filter((n) => n.length > 0)
+        )
+      ).slice(0, 60)
+    : DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
+
+  return {
+    catalogVersion: Math.max(1, Math.floor(catalogVersion)),
+    storeOpen: Boolean(settings.storeOpen),
+    deliveryFeeCop: Math.max(0, Math.round(Number(settings.deliveryFeeCop) || 0)),
+    freeDeliveryMinCop: Math.max(0, Math.round(Number(settings.freeDeliveryMinCop) || 0)),
+    transferNequi: sanitizeText(
+      settings.transferNequi || DEFAULT_STORE_SETTINGS.transferNequi,
+      SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+    ),
+    transferDaviplata: sanitizeText(
+      settings.transferDaviplata || DEFAULT_STORE_SETTINGS.transferDaviplata,
+      SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+    ),
+    transferBancolombiaKey: sanitizeText(
+      settings.transferBancolombiaKey || '',
+      SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+    ),
+    transferHolderName: sanitizeText(
+      settings.transferHolderName || DEFAULT_STORE_SETTINGS.transferHolderName,
+      SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+    ),
+    storeLat:
+      Number.isFinite(lat) && lat >= -90 && lat <= 90
+        ? Number(lat.toFixed(6))
+        : DEFAULT_STORE_SETTINGS.storeLat,
+    storeLng:
+      Number.isFinite(lng) && lng >= -180 && lng <= 180
+        ? Number(lng.toFixed(6))
+        : DEFAULT_STORE_SETTINGS.storeLng,
+    maxDeliveryKm:
+      Number.isFinite(maxKm) && maxKm >= 0.1 && maxKm <= 100
+        ? Number(maxKm.toFixed(2))
+        : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
+    allowedNeighborhoods: sanitizedNeighborhoods,
+    updatedAt: serverTimestamp(),
+  };
+}
+
 export async function publishCatalogVersionAdmin(currentSettings: StoreSettings): Promise<number> {
   const nextVersion = Math.max(1, currentSettings.catalogVersion) + 1;
   try {
-    await setDoc(doc(db, 'settings', 'store'), {
-      catalogVersion: nextVersion,
-      storeOpen: Boolean(currentSettings.storeOpen),
-      deliveryFeeCop: Math.max(0, Math.round(currentSettings.deliveryFeeCop)),
-      freeDeliveryMinCop: Math.max(0, Math.round(currentSettings.freeDeliveryMinCop)),
-      transferNequi: sanitizeText(
-        currentSettings.transferNequi || DEFAULT_STORE_SETTINGS.transferNequi,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferDaviplata: sanitizeText(
-        currentSettings.transferDaviplata || DEFAULT_STORE_SETTINGS.transferDaviplata,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferBancolombiaKey: sanitizeText(
-        currentSettings.transferBancolombiaKey || '',
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferHolderName: sanitizeText(
-        currentSettings.transferHolderName || DEFAULT_STORE_SETTINGS.transferHolderName,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'settings', 'store'),
+      buildSanitizedStoreSettingsDoc(currentSettings, nextVersion)
+    );
     clearCatalogCache();
     return nextVersion;
   } catch (error) {
@@ -932,29 +965,10 @@ export async function deleteProductAdmin(productId: string, currentSettings: Sto
 
 export async function updateStoreSettingsAdmin(nextSettings: StoreSettings): Promise<void> {
   try {
-    await setDoc(doc(db, 'settings', 'store'), {
-      catalogVersion: Math.max(1, Math.floor(nextSettings.catalogVersion)),
-      storeOpen: Boolean(nextSettings.storeOpen),
-      deliveryFeeCop: Math.max(0, Math.round(nextSettings.deliveryFeeCop)),
-      freeDeliveryMinCop: Math.max(0, Math.round(nextSettings.freeDeliveryMinCop)),
-      transferNequi: sanitizeText(
-        nextSettings.transferNequi || DEFAULT_STORE_SETTINGS.transferNequi,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferDaviplata: sanitizeText(
-        nextSettings.transferDaviplata || DEFAULT_STORE_SETTINGS.transferDaviplata,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferBancolombiaKey: sanitizeText(
-        nextSettings.transferBancolombiaKey || '',
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      transferHolderName: sanitizeText(
-        nextSettings.transferHolderName || DEFAULT_STORE_SETTINGS.transferHolderName,
-        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
-      ),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'settings', 'store'),
+      buildSanitizedStoreSettingsDoc(nextSettings, nextSettings.catalogVersion)
+    );
     clearCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'settings/store');
@@ -983,17 +997,10 @@ export async function seedColombianCatalogAdmin(currentVersion: number): Promise
     });
 
     const nextVersion = Math.max(1, currentVersion) + 1;
-    batch.set(doc(db, 'settings', 'store'), {
-      catalogVersion: nextVersion,
-      storeOpen: DEFAULT_STORE_SETTINGS.storeOpen,
-      deliveryFeeCop: DEFAULT_STORE_SETTINGS.deliveryFeeCop,
-      freeDeliveryMinCop: DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
-      transferNequi: DEFAULT_STORE_SETTINGS.transferNequi,
-      transferDaviplata: DEFAULT_STORE_SETTINGS.transferDaviplata,
-      transferBancolombiaKey: DEFAULT_STORE_SETTINGS.transferBancolombiaKey,
-      transferHolderName: DEFAULT_STORE_SETTINGS.transferHolderName,
-      updatedAt: serverTimestamp(),
-    });
+    batch.set(
+      doc(db, 'settings', 'store'),
+      buildSanitizedStoreSettingsDoc(DEFAULT_STORE_SETTINGS, nextVersion)
+    );
 
     await batch.commit();
     clearCatalogCache();

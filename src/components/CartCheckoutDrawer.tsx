@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   Copy,
   Landmark,
   LogIn,
+  MapPin,
+  MessageCircle,
   Minus,
   Plus,
   ShoppingBag,
@@ -12,8 +15,13 @@ import {
   X,
 } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
+import { DEFAULT_STORE_SETTINGS } from '../data/colombianCatalog';
 import { unlockAudioContext } from '../lib/audio';
 import { formatCop, makeCartKey } from '../lib/format';
+import {
+  buildSpecialDeliveryWhatsAppUrl,
+  calculateCityDistanceKm,
+} from '../lib/geo';
 import {
   createOrderAndWhatsApp,
   InsufficientStockError,
@@ -94,19 +102,47 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<ConfirmedOrderSummary | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<
+    'idle' | 'loading' | 'ok' | 'out_of_range' | 'error'
+  >('idle');
+  const [gpsDistanceKm, setGpsDistanceKm] = useState<number | null>(null);
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [gpsError, setGpsError] = useState('');
+  const [selectedNeighborhoodOption, setSelectedNeighborhoodOption] = useState('');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const errorBannerRef = useRef<HTMLDivElement | null>(null);
 
+  const OTHER_NEIGHBORHOOD_VALUE = '__OTHER__';
+  const allowedNeighborhoods = storeSettings?.allowedNeighborhoods ?? DEFAULT_STORE_SETTINGS.allowedNeighborhoods;
+
   useEffect(() => {
-    if (isOpen && step !== 'confirmed') {
+    if (isOpen && step === 'cart') {
       setCustomerName(profile?.fullName || user?.displayName || '');
       setPhone(profile?.phone || '');
       setAddress(profile?.address || '');
-      setNeighborhood(profile?.neighborhood || '');
+      const savedBarrio = (profile?.neighborhood || '').trim();
+      if (allowedNeighborhoods.length > 0) {
+        const matched = allowedNeighborhoods.find(
+          (b) => b.toLowerCase() === savedBarrio.toLowerCase()
+        );
+        if (matched) {
+          setSelectedNeighborhoodOption(matched);
+          setNeighborhood(matched);
+        } else if (savedBarrio) {
+          setSelectedNeighborhoodOption(OTHER_NEIGHBORHOOD_VALUE);
+          setNeighborhood(savedBarrio);
+        } else {
+          setSelectedNeighborhoodOption('');
+          setNeighborhood('');
+        }
+      } else {
+        setSelectedNeighborhoodOption('');
+        setNeighborhood(savedBarrio);
+      }
       setReferencePoint(profile?.referencePoint || '');
       setPaymentMethod(normalizeCustomerPaymentMethod(profile?.preferredPayment));
     }
-  }, [isOpen, profile, user, step]);
+  }, [isOpen, profile, user, step, allowedNeighborhoods]);
 
   useEffect(() => {
     if (isOpen && scrollContainerRef.current) {
@@ -182,8 +218,82 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     }, 2000);
   };
 
+  const storeLat =
+    typeof storeSettings?.storeLat === 'number' && Number.isFinite(storeSettings.storeLat)
+      ? storeSettings.storeLat
+      : DEFAULT_STORE_SETTINGS.storeLat;
+  const storeLng =
+    typeof storeSettings?.storeLng === 'number' && Number.isFinite(storeSettings.storeLng)
+      ? storeSettings.storeLng
+      : DEFAULT_STORE_SETTINGS.storeLng;
+  const maxDeliveryKm =
+    typeof storeSettings?.maxDeliveryKm === 'number' &&
+    Number.isFinite(storeSettings.maxDeliveryKm) &&
+    storeSettings.maxDeliveryKm >= 0.1
+      ? storeSettings.maxDeliveryKm
+      : DEFAULT_STORE_SETTINGS.maxDeliveryKm;
+
+  const isOutOfRange = gpsStatus === 'out_of_range';
+  const isOtherNeighborhoodBlocked =
+    allowedNeighborhoods.length > 0 &&
+    selectedNeighborhoodOption === OTHER_NEIGHBORHOOD_VALUE &&
+    gpsStatus !== 'ok';
+  const isCoverageBlocked = isOutOfRange || isOtherNeighborhoodBlocked;
+
+  const specialDeliveryWhatsAppUrl = buildSpecialDeliveryWhatsAppUrl({
+    customerName,
+    phone,
+    address,
+    neighborhood:
+      selectedNeighborhoodOption && selectedNeighborhoodOption !== OTHER_NEIGHBORHOOD_VALUE
+        ? selectedNeighborhoodOption
+        : neighborhood,
+    distanceKm: gpsDistanceKm,
+    maxDeliveryKm,
+    coords: gpsCoords,
+    items: safeCartItems,
+    subtotalCop: safeSubtotal,
+  });
+
+  const handleValidateGpsCoverage = () => {
+    setFormError('');
+    setGpsError('');
+    if (!navigator.geolocation) {
+      setGpsStatus('error');
+      setGpsError(
+        'Tu navegador no permite validar GPS. Selecciona tu barrio abajo o cotiza por WhatsApp.'
+      );
+      return;
+    }
+
+    setGpsStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const distKm = calculateCityDistanceKm(storeLat, storeLng, lat, lng);
+        setGpsCoords({ lat, lng });
+        setGpsDistanceKm(distKm);
+        setGpsStatus(distKm <= maxDeliveryKm ? 'ok' : 'out_of_range');
+      },
+      (err) => {
+        setGpsStatus('error');
+        if (err.code === err.PERMISSION_DENIED) {
+          setGpsError(
+            'Permiso de ubicación denegado. Actívalo en tu navegador o selecciona tu barrio en la lista.'
+          );
+        } else {
+          setGpsError(
+            'No pudimos obtener tu ubicación GPS en este momento. Selecciona tu barrio en la lista o cotiza por WhatsApp.'
+          );
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  };
+
   const handleFieldFocus = (
-    e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const target = e.currentTarget;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -237,12 +347,33 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       setFormError('Ingresa un número de celular válido.');
       return;
     }
+    if (isOutOfRange) {
+      setFormError(
+        `Tu ubicación está a ${gpsDistanceKm?.toFixed(1) ?? ''} km y supera nuestra cobertura normal de ${maxDeliveryKm} km. Usa el botón de WhatsApp para cotizar domicilio especial.`
+      );
+      return;
+    }
+    if (isOtherNeighborhoodBlocked) {
+      setFormError(
+        'Para un barrio fuera de la lista, valida tu cobertura con GPS o cotiza tu domicilio especial por WhatsApp.'
+      );
+      return;
+    }
     if (address.trim().length < 4) {
       setFormError('Ingresa tu dirección exacta de entrega.');
       return;
     }
-    if (neighborhood.trim().length < 2) {
-      setFormError('Ingresa el barrio o sector.');
+
+    const resolvedNeighborhood =
+      selectedNeighborhoodOption && selectedNeighborhoodOption !== OTHER_NEIGHBORHOOD_VALUE
+        ? selectedNeighborhoodOption.trim()
+        : neighborhood.trim() ||
+          (gpsStatus === 'ok' && gpsDistanceKm !== null
+            ? `Zona GPS (${gpsDistanceKm.toFixed(1)} km)`
+            : '');
+
+    if (resolvedNeighborhood.length < 2) {
+      setFormError('Selecciona tu barrio de la lista o valida tu cobertura por GPS.');
       return;
     }
 
@@ -261,9 +392,13 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     const cleanName = customerName.trim();
     const cleanPhone = phone.trim();
     const cleanAddress = address.trim();
-    const cleanNeighborhood = neighborhood.trim();
+    const cleanNeighborhood = resolvedNeighborhood;
     const cleanRef = referencePoint.trim();
-    const cleanNotes = notes.trim();
+    const gpsNoteSuffix =
+      gpsCoords && gpsDistanceKm !== null
+        ? ` [GPS: ${gpsDistanceKm.toFixed(1)} km · https://maps.google.com/?q=${gpsCoords.lat.toFixed(5)},${gpsCoords.lng.toFixed(5)}]`
+        : '';
+    const cleanNotes = `${notes.trim()}${gpsNoteSuffix}`.trim().slice(0, SCHEMA_LIMITS.NOTES_MAX);
     const cleanLast4 = receiptLast4.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4);
 
     setIsSubmitting(true);
@@ -340,6 +475,10 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     setStep('cart');
     setFormError('');
     setReceiptLast4('');
+    setGpsStatus('idle');
+    setGpsDistanceKm(null);
+    setGpsCoords(null);
+    setGpsError('');
     onClose();
   };
 
@@ -575,21 +714,106 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 />
               </div>
 
+              {/* Validación gratuita de cobertura por GPS o barrio */}
+              <div className="rounded-2xl border border-[#1B4F9C]/20 bg-[#F4F6F9] p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold text-[#072146] inline-flex items-center gap-1.5">
+                    <MapPin className="h-4 w-4 text-[#1B4F9C]" />
+                    Validación de cobertura (hasta {maxDeliveryKm} km)
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={gpsStatus === 'loading'}
+                  onClick={handleValidateGpsCoverage}
+                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#1B4F9C] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-[#072146] disabled:opacity-60 transition"
+                >
+                  {gpsStatus === 'loading'
+                    ? 'Obteniendo ubicación GPS...'
+                    : '📍 Validar cobertura con mi ubicación GPS'}
+                </button>
+
+                {gpsStatus === 'ok' && gpsDistanceKm !== null && (
+                  <div className="rounded-xl bg-[#128C4A]/15 border border-[#128C4A]/35 px-3 py-2 text-xs font-extrabold text-[#128C4A]">
+                    ✅ Estás dentro de nuestra zona de entrega (a {gpsDistanceKm.toFixed(1)} km)
+                  </div>
+                )}
+
+                {gpsStatus === 'out_of_range' && gpsDistanceKm !== null && (
+                  <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 p-3 space-y-2.5">
+                    <p className="text-xs font-extrabold text-[#C62828] flex items-start gap-1.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>
+                        🚫 Estás a {gpsDistanceKm.toFixed(1)} km. Nuestra cobertura normal es hasta {maxDeliveryKm} km
+                      </span>
+                    </p>
+                    <a
+                      href={specialDeliveryWhatsAppUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-2.5 text-xs font-extrabold text-white hover:brightness-110 transition"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      📲 Cotizar domicilio especial por WhatsApp
+                    </a>
+                  </div>
+                )}
+
+                {gpsStatus === 'error' && gpsError && (
+                  <div className="rounded-xl bg-[#F5A623]/20 border border-[#F5A623]/50 px-3 py-2 text-xs font-bold text-[#072146]">
+                    {gpsError}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                    Barrio *
+                    Barrio / Zona *
                   </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
-                    value={neighborhood}
-                    onChange={(e) => setNeighborhood(e.target.value)}
-                    onFocus={handleFieldFocus}
-                    placeholder="Ej. Chapinero / El Poblado"
-                    className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
-                  />
+                  {allowedNeighborhoods.length > 0 ? (
+                    <select
+                      required
+                      value={selectedNeighborhoodOption}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedNeighborhoodOption(val);
+                        if (val !== OTHER_NEIGHBORHOOD_VALUE) {
+                          setNeighborhood(val);
+                        } else if (
+                          allowedNeighborhoods.some(
+                            (b) => b.toLowerCase() === neighborhood.toLowerCase()
+                          )
+                        ) {
+                          setNeighborhood('');
+                        }
+                      }}
+                      onFocus={handleFieldFocus}
+                      className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 bg-white px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+                    >
+                      <option value="">Selecciona tu barrio...</option>
+                      {allowedNeighborhoods.map((barrio) => (
+                        <option key={barrio} value={barrio}>
+                          {barrio}
+                        </option>
+                      ))}
+                      <option value={OTHER_NEIGHBORHOOD_VALUE}>
+                        Otro barrio -&gt; Consultar por WhatsApp
+                      </option>
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      required
+                      maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
+                      value={neighborhood}
+                      onChange={(e) => setNeighborhood(e.target.value)}
+                      onFocus={handleFieldFocus}
+                      placeholder="Ej. Suba / Colina / Cedritos"
+                      className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-[#072146]/80 mb-1">
@@ -606,6 +830,42 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   />
                 </div>
               </div>
+
+              {allowedNeighborhoods.length > 0 &&
+                selectedNeighborhoodOption === OTHER_NEIGHBORHOOD_VALUE && (
+                  <div className="rounded-xl border border-[#F5A623]/50 bg-[#F5A623]/15 p-3 space-y-2.5">
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146] mb-1">
+                        ¿Cuál es tu barrio o sector?
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={SCHEMA_LIMITS.NEIGHBORHOOD_MAX}
+                        value={neighborhood}
+                        onChange={(e) => setNeighborhood(e.target.value)}
+                        onFocus={handleFieldFocus}
+                        placeholder="Escribe el nombre de tu barrio"
+                        className="w-full min-h-[42px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+                      />
+                    </div>
+                    {gpsStatus !== 'ok' && (
+                      <>
+                        <p className="text-xs font-bold text-[#072146]">
+                          Este barrio no está en la lista automática. Valida tu distancia por GPS arriba o cotiza un domicilio especial por WhatsApp:
+                        </p>
+                        <a
+                          href={specialDeliveryWhatsAppUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-2 text-xs font-extrabold text-white hover:brightness-110 transition"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                          📲 Cotizar domicilio especial por WhatsApp
+                        </a>
+                      </>
+                    )}
+                  </div>
+                )}
 
               {/* Pago anticipado 100% por transferencia */}
               <div className="rounded-2xl bg-[#072146] p-4 text-white space-y-3">
@@ -811,13 +1071,36 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   ⚠️ Importante: Para despachar tu pedido debes transferir el total y enviar el mensaje de la orden junto con la foto del comprobante a nuestro WhatsApp.
                 </div>
 
+                {isCoverageBlocked && (
+                  <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 p-3 space-y-2">
+                    <p className="text-xs font-extrabold text-[#C62828]">
+                      {isOutOfRange && gpsDistanceKm !== null
+                        ? `🚫 Estás a ${gpsDistanceKm.toFixed(1)} km. Nuestra cobertura normal es hasta ${maxDeliveryKm} km.`
+                        : '🚫 Barrio por confirmar cobertura. Valida con GPS o cotiza tu domicilio especial por WhatsApp.'}
+                    </p>
+                    <a
+                      href={specialDeliveryWhatsAppUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-2.5 text-sm font-extrabold text-white hover:brightness-110 transition"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      📲 Cotizar domicilio especial por WhatsApp
+                    </a>
+                  </div>
+                )}
+
                 <button
                   type="button"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCoverageBlocked}
                   onClick={() => void processOrderSubmission()}
-                  className="w-full min-h-[48px] rounded-xl bg-[#F5A623] px-5 py-3 text-sm font-extrabold text-[#072146] hover:brightness-95 disabled:opacity-60 transition"
+                  className="w-full min-h-[48px] rounded-xl bg-[#F5A623] px-5 py-3 text-sm font-extrabold text-[#072146] hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
-                  {isSubmitting ? 'Procesando pedido...' : 'Confirmar Pedido'}
+                  {isSubmitting
+                    ? 'Procesando pedido...'
+                    : isCoverageBlocked
+                      ? 'Fuera de cobertura normal'
+                      : 'Confirmar Pedido'}
                 </button>
               </div>
             </form>

@@ -10,6 +10,7 @@ import {
   KeyRound,
   LogIn,
   LogOut,
+  MapPin,
   MessageCircle,
   Minus,
   Package,
@@ -22,6 +23,7 @@ import {
   Smartphone,
   Trash2,
   Truck,
+  X,
 } from 'lucide-react';
 import {
   signInWithEmailAndPassword,
@@ -134,6 +136,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   const [pendingPublish, setPendingPublish] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<StoreSettings>(storeSettings);
   const [newPinDraft, setNewPinDraft] = useState('');
+  const [newNeighborhoodDraft, setNewNeighborhoodDraft] = useState('');
+  const [locatingStoreGps, setLocatingStoreGps] = useState(false);
 
   // Product editor state
   const [editingId, setEditingId] = useState('');
@@ -435,19 +439,114 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }
   };
 
+  const handleAddNeighborhood = () => {
+    const clean = newNeighborhoodDraft.trim().slice(0, 100);
+    if (!clean) return;
+    const current = Array.isArray(settingsDraft.allowedNeighborhoods)
+      ? settingsDraft.allowedNeighborhoods
+      : [];
+    if (current.length >= 60) {
+      setErrorBanner('Máximo 60 barrios habilitados permitidos.');
+      return;
+    }
+    const exists = current.some((n) => n.toLowerCase() === clean.toLowerCase());
+    if (exists) {
+      setNewNeighborhoodDraft('');
+      return;
+    }
+    setSettingsDraft({
+      ...settingsDraft,
+      allowedNeighborhoods: [...current, clean],
+    });
+    setNewNeighborhoodDraft('');
+  };
+
+  const handleRemoveNeighborhood = (target: string) => {
+    const current = Array.isArray(settingsDraft.allowedNeighborhoods)
+      ? settingsDraft.allowedNeighborhoods
+      : [];
+    setSettingsDraft({
+      ...settingsDraft,
+      allowedNeighborhoods: current.filter((n) => n !== target),
+    });
+  };
+
+  const handleCaptureStoreGps = () => {
+    if (!navigator.geolocation) {
+      setErrorBanner('Este navegador no soporta geolocalización GPS.');
+      return;
+    }
+    setLocatingStoreGps(true);
+    setErrorBanner('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setSettingsDraft((prev) => ({
+          ...prev,
+          storeLat: Number(pos.coords.latitude.toFixed(6)),
+          storeLng: Number(pos.coords.longitude.toFixed(6)),
+        }));
+        setLocatingStoreGps(false);
+        setNotice('Coordenadas GPS del local capturadas. Pulsa Guardar para publicarlas.');
+      },
+      () => {
+        setLocatingStoreGps(false);
+        setErrorBanner(
+          'No pudimos leer tu GPS actual. Copia Latitud y Longitud directamente desde Google Maps.'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const handleSaveDeliverySettings = async () => {
+    const lat = Number(settingsDraft.storeLat);
+    const lng = Number(settingsDraft.storeLng);
+    const maxKm = Number(settingsDraft.maxDeliveryKm);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      setErrorBanner('La latitud del local debe estar entre -90 y 90 (ej. 4.7410).');
+      return;
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      setErrorBanner('La longitud del local debe estar entre -180 y 180 (ej. -74.0840).');
+      return;
+    }
+    if (!Number.isFinite(maxKm) || maxKm < 0.1 || maxKm > 100) {
+      setErrorBanner('El radio máximo de entrega debe estar entre 0.1 y 100 km.');
+      return;
+    }
+
+    const currentNeighborhoods = Array.isArray(settingsDraft.allowedNeighborhoods)
+      ? [...settingsDraft.allowedNeighborhoods]
+      : [];
+    const pendingBarrio = newNeighborhoodDraft.trim().slice(0, 100);
+    if (
+      pendingBarrio &&
+      currentNeighborhoods.length < 60 &&
+      !currentNeighborhoods.some((n) => n.toLowerCase() === pendingBarrio.toLowerCase())
+    ) {
+      currentNeighborhoods.push(pendingBarrio);
+      setNewNeighborhoodDraft('');
+    }
+
     setBusy(true);
     setNotice('');
+    setErrorBanner('');
     try {
       const next: StoreSettings = {
         ...settingsDraft,
+        storeLat: Number(lat.toFixed(6)),
+        storeLng: Number(lng.toFixed(6)),
+        maxDeliveryKm: Number(maxKm.toFixed(2)),
+        allowedNeighborhoods: currentNeighborhoods,
         catalogVersion: settingsDraft.catalogVersion + 1,
       };
       await updateStoreSettingsAdmin(next);
       setSettingsDraft(next);
       onStoreSettingsUpdated(next);
       setPendingPublish(false);
-      setNotice(`Tarifas y datos de transferencia guardados y publicados (v${next.catalogVersion}).`);
+      setNotice(
+        `Cobertura, tarifas y transferencias guardadas y publicadas (v${next.catalogVersion}).`
+      );
     } catch {
       setErrorBanner('Error al guardar configuración de tienda.');
     } finally {
@@ -1587,141 +1686,279 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
               )}
             </section>
 
-            {/* Store Delivery, Transfer Accounts & PIN Settings */}
-            <section className="rounded-2xl bg-white p-4 sm:p-6 border border-[#1B4F9C]/20 grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <h3 className="font-display text-sm font-extrabold text-[#072146]">
-                  Tarifa de domicilio & cuentas para transferencia
-                </h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Domicilio (COP)
-                    </label>
-                    <input
-                      type="number"
-                      value={settingsDraft.deliveryFeeCop}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          deliveryFeeCop: Number(e.target.value) || 0,
-                        })
-                      }
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
-                    />
+            {/* Store Coverage, Delivery Fees, Transfer Accounts & PIN Settings */}
+            <section className="rounded-2xl bg-white p-4 sm:p-6 border border-[#1B4F9C]/20 space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Zona y Kilómetros de Cobertura */}
+                <div className="space-y-3 rounded-2xl bg-[#F4F6F9]/70 p-4 border border-[#1B4F9C]/15">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-display text-sm font-extrabold text-[#072146] inline-flex items-center gap-1.5">
+                      <MapPin className="h-4 w-4 text-[#1B4F9C]" />
+                      Zona y Kilómetros de Cobertura
+                    </h3>
+                    <button
+                      type="button"
+                      disabled={locatingStoreGps}
+                      onClick={handleCaptureStoreGps}
+                      className="min-h-[32px] rounded-lg bg-white border border-[#1B4F9C]/25 px-2.5 text-[11px] font-bold text-[#1B4F9C] hover:bg-[#1B4F9C]/10 disabled:opacity-60 transition"
+                    >
+                      {locatingStoreGps ? 'Leyendo GPS...' : '📍 Usar mi ubicación actual'}
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Gratis desde (COP)
-                    </label>
-                    <input
-                      type="number"
-                      value={settingsDraft.freeDeliveryMinCop}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          freeDeliveryMinCop: Number(e.target.value) || 0,
-                        })
-                      }
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
-                    />
+
+                  <p className="text-[11px] text-[#072146]/75 leading-relaxed">
+                    En Google Maps haz clic derecho (o mantén presionado en el celular) sobre tu local y copia las coordenadas que aparecen arriba (ej. <strong>4.7410, -74.0840</strong>).
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Latitud (storeLat)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={settingsDraft.storeLat}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            storeLat: Number(e.target.value),
+                          })
+                        }
+                        placeholder="4.7410"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Longitud (storeLng)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={settingsDraft.storeLng}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            storeLng: Number(e.target.value),
+                          })
+                        }
+                        placeholder="-74.0840"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Radio máximo (km)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        max="100"
+                        value={settingsDraft.maxDeliveryKm}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            maxDeliveryKm: Number(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="5"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Número Nequi
+
+                  <div className="space-y-2 pt-1">
+                    <label className="block text-xs font-bold text-[#072146]/80">
+                      Barrios / Zonas habilitadas ({(settingsDraft.allowedNeighborhoods || []).length})
                     </label>
-                    <input
-                      type="text"
-                      value={settingsDraft.transferNequi}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          transferNequi: e.target.value,
-                        })
-                      }
-                      placeholder="304 3806922"
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Número Daviplata
-                    </label>
-                    <input
-                      type="text"
-                      value={settingsDraft.transferDaviplata}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          transferDaviplata: e.target.value,
-                        })
-                      }
-                      placeholder="304 3806922"
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Llave Bre-B / Bancolombia
-                    </label>
-                    <input
-                      type="text"
-                      value={settingsDraft.transferBancolombiaKey}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          transferBancolombiaKey: e.target.value,
-                        })
-                      }
-                      placeholder="Ej. @bodegon247 o cta ahorros"
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                      Titular de la cuenta
-                    </label>
-                    <input
-                      type="text"
-                      value={settingsDraft.transferHolderName}
-                      onChange={(e) =>
-                        setSettingsDraft({
-                          ...settingsDraft,
-                          transferHolderName: e.target.value,
-                        })
-                      }
-                      placeholder="El Bodegón del Licor"
-                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        maxLength={100}
+                        value={newNeighborhoodDraft}
+                        onChange={(e) => setNewNeighborhoodDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddNeighborhood();
+                          }
+                        }}
+                        placeholder="Ej. Colina Campestre, Suba, Cedritos..."
+                        className="flex-1 min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddNeighborhood}
+                        className="min-h-[40px] inline-flex items-center gap-1 rounded-xl bg-[#1B4F9C] px-3.5 text-xs font-bold text-white hover:bg-[#072146] transition shrink-0"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Agregar
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {(settingsDraft.allowedNeighborhoods || []).length === 0 ? (
+                        <p className="text-[11px] text-[#072146]/60">
+                          Sin barrios cargados. Agrega barrios o los clientes usarán validación GPS.
+                        </p>
+                      ) : (
+                        (settingsDraft.allowedNeighborhoods || []).map((barrio) => (
+                          <span
+                            key={barrio}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-[#1B4F9C]/20 px-2.5 py-1 text-xs font-bold text-[#072146]"
+                          >
+                            <span>{barrio}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveNeighborhood(barrio)}
+                              className="rounded-md p-0.5 text-[#C62828]/80 hover:bg-[#C62828]/10 hover:text-[#C62828] transition"
+                              aria-label={`Quitar barrio ${barrio}`}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </span>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                {/* Tarifas & Cuentas de Transferencia */}
+                <div className="space-y-3 rounded-2xl bg-[#F4F6F9]/70 p-4 border border-[#1B4F9C]/15">
+                  <h3 className="font-display text-sm font-extrabold text-[#072146]">
+                    Tarifa de domicilio & cuentas para transferencia
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Domicilio base (COP)
+                      </label>
+                      <input
+                        type="number"
+                        value={settingsDraft.deliveryFeeCop}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            deliveryFeeCop: Number(e.target.value) || 0,
+                          })
+                        }
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Envío gratis desde (COP)
+                      </label>
+                      <input
+                        type="number"
+                        value={settingsDraft.freeDeliveryMinCop}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            freeDeliveryMinCop: Number(e.target.value) || 0,
+                          })
+                        }
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Número Nequi
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsDraft.transferNequi}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            transferNequi: e.target.value,
+                          })
+                        }
+                        placeholder="304 3806922"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Número Daviplata
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsDraft.transferDaviplata}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            transferDaviplata: e.target.value,
+                          })
+                        }
+                        placeholder="304 3806922"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Llave Bre-B / Bancolombia
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsDraft.transferBancolombiaKey}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            transferBancolombiaKey: e.target.value,
+                          })
+                        }
+                        placeholder="Ej. @bodegon247 o cta ahorros"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                        Titular de la cuenta
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsDraft.transferHolderName}
+                        onChange={(e) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            transferHolderName: e.target.value,
+                          })
+                        }
+                        placeholder="El Bodegón del Licor"
+                        className="w-full min-h-[40px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-[#1B4F9C]/15">
                 <button
                   type="button"
                   disabled={busy}
                   onClick={handleSaveDeliverySettings}
-                  className="min-h-[42px] rounded-xl bg-[#072146] px-4 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
+                  className="min-h-[44px] rounded-xl bg-[#072146] px-5 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
                 >
-                  Guardar tarifas, transferencias y publicar
+                  Guardar cobertura, tarifas y publicar
                 </button>
-              </div>
 
-              <div className="space-y-3">
-                <h3 className="font-display text-sm font-extrabold text-[#072146]">
-                  Cambiar PIN de seguridad local (/admin)
-                </h3>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-[#072146]/75">PIN /admin:</span>
                   <input
                     type="password"
                     inputMode="numeric"
                     value={newPinDraft}
                     onChange={(e) => setNewPinDraft(e.target.value)}
                     placeholder="Nuevo PIN (mín. 4 dígitos)"
-                    className="flex-1 min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    className="w-48 min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
                   />
                   <button
                     type="button"
                     onClick={handleSavePinConfig}
-                    className="min-h-[40px] rounded-xl bg-[#F4F6F9] border border-[#1B4F9C]/25 px-4 text-xs font-bold text-[#072146] hover:bg-[#1B4F9C]/10"
+                    className="min-h-[40px] rounded-xl bg-[#F4F6F9] border border-[#1B4F9C]/25 px-3.5 text-xs font-bold text-[#072146] hover:bg-[#1B4F9C]/10"
                   >
                     Actualizar PIN
                   </button>
