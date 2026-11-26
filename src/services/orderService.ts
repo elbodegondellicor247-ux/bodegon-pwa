@@ -802,6 +802,42 @@ export async function fetchAllProductsAdmin(): Promise<Product[]> {
   }
 }
 
+export function subscribeAllProductsAdmin(
+  onProducts: (products: Product[]) => void,
+  onError?: (error: unknown) => void
+): () => void {
+  const q = query(collection(db, 'products'), limit(150));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const mapped = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: String(data.name ?? ''),
+            presentation: String(data.presentation ?? ''),
+            category: data.category,
+            priceCop: Number(data.priceCop ?? 0),
+            costPrice: Number(data.costPrice ?? data.costPriceCop ?? 0),
+            stock: Number(data.stock ?? 0),
+            supportsColdOption: Boolean(data.supportsColdOption),
+            imageUrl: String(data.imageUrl ?? ''),
+            active: Boolean(data.active),
+            sortOrder: Number(data.sortOrder ?? 0),
+            searchLower: String(data.searchLower ?? ''),
+          } as Product;
+        })
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      onProducts(mapped);
+    },
+    (error) => {
+      if (onError) onError(error);
+      else handleFirestoreError(error, OperationType.LIST, 'products');
+    }
+  );
+}
+
 export async function upsertProductAdmin(
   product: Product,
   bumpVersionFrom?: StoreSettings,

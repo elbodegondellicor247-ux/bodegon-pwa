@@ -384,7 +384,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 pb-24 space-y-5"
+          className={`flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5 ${
+            step === 'confirmed' ? 'pb-6' : 'pb-24'
+          }`}
         >
           {step === 'confirmed' && receipt ? (
             <OrderTrackingView

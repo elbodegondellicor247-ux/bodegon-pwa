@@ -45,6 +45,7 @@ import {
   fetchOlderAdminOrders,
   publishCatalogVersionAdmin,
   seedColombianCatalogAdmin,
+  subscribeAllProductsAdmin,
   subscribeLiveAdminOrders,
   updateOrderStatusAdmin,
   updateStoreSettingsAdmin,
@@ -302,16 +303,22 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }
   };
 
+  // Real-time onSnapshot listener on products collection while /admin is unlocked (sin localStorage)
   useEffect(() => {
-    if (
-      effectiveIsAdmin &&
-      pinUnlocked &&
-      (tab === 'inventory' || tab === 'purchases' || isPosOpen) &&
-      products.length === 0
-    ) {
-      loadInventory();
-    }
-  }, [effectiveIsAdmin, pinUnlocked, tab, isPosOpen, products.length]);
+    if (!effectiveIsAdmin || !pinUnlocked) return;
+    setLoadingProducts(true);
+    const unsub = subscribeAllProductsAdmin(
+      (list) => {
+        setProducts(list);
+        setLoadingProducts(false);
+      },
+      () => {
+        setErrorBanner('Error al sincronizar inventario en tiempo real desde Firestore.');
+        setLoadingProducts(false);
+      }
+    );
+    return () => unsub();
+  }, [effectiveIsAdmin, pinUnlocked]);
 
   const inventoryStats = useMemo(() => {
     return products.reduce(

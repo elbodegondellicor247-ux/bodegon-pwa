@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Bell,
   Check,
   CheckCircle2,
-  Clock,
   Copy,
   MessageCircle,
   PackageCheck,
@@ -48,11 +48,54 @@ interface OrderTrackingViewProps {
 }
 
 const PROGRESS_STEPS: { status: OrderStatus; label: string }[] = [
-  { status: 'Pendiente', label: 'Pendiente de Pago' },
-  { status: 'Confirmado', label: 'Pago confirmado' },
+  { status: 'Pendiente', label: 'Pendiente' },
+  { status: 'Confirmado', label: 'Confirmado' },
   { status: 'En camino', label: 'En camino' },
   { status: 'Entregado', label: 'Entregado' },
 ];
+
+type NotificationPermState = NotificationPermission | 'unsupported';
+
+function getNotificationPermissionState(): NotificationPermState {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return 'unsupported';
+  }
+  return Notification.permission;
+}
+
+function triggerCustomerBackgroundNotification(status: OrderStatus, shortOrderCode: string): void {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  const title =
+    status === 'Confirmado'
+      ? '✅ ¡Pago Confirmado! Tu pedido de El Bodegón del Licor ya se está preparando'
+      : '🛵 ¡Tu pedido de El Bodegón del Licor va en camino!';
+  const body =
+    status === 'Confirmado'
+      ? `Orden #${shortOrderCode} aprobada. En minutos sale nuestro domiciliario.`
+      : `Orden #${shortOrderCode}: ten tu celular a la mano, el repartidor va hacia tu dirección.`;
+
+  try {
+    new Notification(title, {
+      body,
+      icon: '/pwa-192x192.png',
+      tag: `bodegon-order-${shortOrderCode}`,
+    });
+  } catch {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then((reg) =>
+          reg.showNotification(title, {
+            body,
+            icon: '/pwa-192x192.png',
+            tag: `bodegon-order-${shortOrderCode}`,
+          })
+        )
+        .catch(() => {});
+    }
+  }
+}
 
 export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
   orderId,
@@ -64,9 +107,35 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
   const [liveOrder, setLiveOrder] = useState<OrderRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [listenError, setListenError] = useState(false);
-  const [audioNotice, setAudioNotice] = useState(false);
+  const [audioActivated, setAudioActivated] = useState(false);
+  const [notifPerm, setNotifPerm] = useState<NotificationPermState>(
+    getNotificationPermissionState
+  );
   const [copiedInline, setCopiedInline] = useState(false);
   const prevStatusRef = useRef<OrderStatus | null>(null);
+
+  const shortOrderCode = orderId.slice(0, 8).toUpperCase();
+
+  const requestNotificationsSafely = useCallback(async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setNotifPerm('unsupported');
+      return;
+    }
+    if (Notification.permission !== 'default') {
+      setNotifPerm(Notification.permission);
+      return;
+    }
+    try {
+      const result = await Promise.resolve(Notification.requestPermission());
+      setNotifPerm(result);
+    } catch {
+      setNotifPerm(getNotificationPermissionState());
+    }
+  }, []);
+
+  useEffect(() => {
+    void requestNotificationsSafely();
+  }, [orderId, requestNotificationsSafely]);
 
   useEffect(() => {
     setLoading(true);
@@ -87,6 +156,7 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
             (order.status === 'Confirmado' || order.status === 'En camino')
           ) {
             playCustomerConfirmedChime();
+            triggerCustomerBackgroundNotification(order.status, shortOrderCode);
           }
           prevStatusRef.current = order.status;
         }
@@ -98,10 +168,9 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
     );
 
     return () => unsub();
-  }, [orderId]);
+  }, [orderId, shortOrderCode]);
 
   const effectiveStatus: OrderStatus = liveOrder?.status ?? 'Pendiente';
-  const shortOrderCode = orderId.slice(0, 8).toUpperCase();
 
   const displayData = useMemo(() => {
     if (liveOrder) {
@@ -134,7 +203,7 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
     if (initialSummary?.whatsappUrl) return initialSummary.whatsappUrl;
     if (!displayData) {
       return `https://wa.me/573043806922?text=${encodeURIComponent(
-        `Hola El Bodegón del Licor, adjunto el comprobante de mi orden #${shortOrderCode}.`
+        `Hola El Bodegón del Licor 🍻, envío mi *PEDIDO #${shortOrderCode}* y adjunto el *COMPROBANTE DE PAGO*.`
       )}`;
     }
     return buildWhatsAppOrderUrl({
@@ -185,104 +254,134 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
     window.setTimeout(() => setCopiedInline(false), 2000);
   };
 
-  const handleEnableSound = () => {
+  const handleEnableSoundAndNotifications = () => {
     unlockAudioContext();
-    setAudioNotice(true);
-    window.setTimeout(() => setAudioNotice(false), 2500);
+    setAudioActivated(true);
+    void requestNotificationsSafely();
   };
 
   return (
-    <div className="rounded-2xl bg-[#F4F6F9] p-4 sm:p-5 border border-[#1B4F9C]/15 space-y-4">
-      {/* Live Status Banner */}
-      {effectiveStatus === 'Pendiente' && (
-        <>
-          <div className="rounded-2xl border-2 border-[#F5A623] bg-[#F5A623]/15 p-4 text-center space-y-2.5">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F5A623] text-[#072146] animate-pulse">
-              <Clock className="h-6 w-6" />
-            </div>
-            <div className="inline-flex items-center justify-center rounded-lg bg-[#F5A623] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-[#072146]">
-              ⏳ Pedido Recibido · Pendiente de Pago
-            </div>
-            <p className="text-xs font-extrabold uppercase tracking-wider text-[#1B4F9C]">
-              Orden #{shortOrderCode} · En vivo
-            </p>
-            <h3 className="font-display text-lg font-extrabold text-[#072146]">
-              ⚠️ ¡Pedido reservado! Falta 1 paso para enviarlo
-            </h3>
-            <p className="text-xs font-medium text-[#072146]/85">
-              Tu orden queda sujeta a cancelación si no recibimos tu mensaje y pago en los próximos 15 minutos
-            </p>
-          </div>
-
-          <div className="rounded-2xl bg-white border border-[#F5A623]/60 p-4 space-y-3 text-left shadow-xs">
-            <div className="space-y-2">
-              <p className="text-xs sm:text-sm font-bold text-[#072146] leading-relaxed">
-                1. Realiza la transferencia exacta (
-                <span className="font-extrabold text-[#1B4F9C] tabular-nums">
-                  {displayData ? formatCop(displayData.totalCop) : 'Total del pedido'}
-                </span>
-                ) a Nequi o Daviplata:{' '}
-                <strong className="font-display text-sm text-[#072146] tabular-nums">
-                  {sameNequiDaviplata
-                    ? nequiDisplay
-                    : `Nequi ${nequiDisplay} · Daviplata ${daviplataDisplay}`}
-                </strong>
-                {bancolombiaDisplay ? ` · Bre-B/Bancolombia: ${bancolombiaDisplay}` : ''}
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleCopyTransferNumber(nequiDisplay)}
-                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#072146] px-3.5 py-1.5 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
-              >
-                {copiedInline ? (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    ¡Número copiado!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-3.5 w-3.5" />
-                    Copiar número {nequiDisplay}
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="border-t border-[#F4F6F9] pt-2.5">
-              <p className="text-xs sm:text-sm font-bold text-[#072146] leading-relaxed">
-                2. Toca el botón verde abajo: se abrirá nuestro WhatsApp con tu pedido ya escrito. Presiona ENVIAR y adjunta la FOTO DEL COMPROBANTE de pago.
-              </p>
-            </div>
-          </div>
-
-          <div
-            role="alert"
-            className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/35 px-3.5 py-2.5 text-xs font-extrabold text-[#C62828] text-center"
+    <div className="space-y-3">
+      {/* Top: Order Number + 4-step Progress Bar (always visible immediately without scrolling) */}
+      <div className="rounded-2xl bg-[#F4F6F9] px-3.5 py-3 border border-[#1B4F9C]/15 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-display text-sm font-extrabold text-[#072146] tabular-nums">
+            Orden #{shortOrderCode}
+          </span>
+          <span
+            className={`rounded-md px-2 py-0.5 text-[11px] font-extrabold ${
+              effectiveStatus === 'Pendiente'
+                ? 'bg-[#F5A623] text-[#072146]'
+                : effectiveStatus === 'Confirmado'
+                  ? 'bg-[#128C4A] text-white'
+                  : effectiveStatus === 'En camino'
+                    ? 'bg-[#1B4F9C] text-white'
+                    : effectiveStatus === 'Entregado'
+                      ? 'bg-[#128C4A] text-white'
+                      : 'bg-[#C62828] text-white'
+            }`}
           >
-            🚫 Sin el envío del pedido y el pantallazo del pago por WhatsApp, tu domicilio NO será entregado.
+            {effectiveStatus === 'Pendiente' ? '⏳ Pendiente de Pago' : effectiveStatus}
+          </span>
+        </div>
+
+        {effectiveStatus !== 'Cancelado' && (
+          <div className="grid grid-cols-4 gap-1.5">
+            {PROGRESS_STEPS.map((stepObj, idx) => {
+              const reached = currentStepIndex >= idx;
+              const isCurrent = currentStepIndex === idx;
+              return (
+                <div key={stepObj.status} className="text-center space-y-1">
+                  <div
+                    className={`h-2 rounded-full transition-colors ${
+                      reached
+                        ? effectiveStatus === 'Pendiente' && isCurrent
+                          ? 'bg-[#F5A623]'
+                          : 'bg-[#128C4A]'
+                        : 'bg-[#072146]/15'
+                    }`}
+                  />
+                  <span
+                    className={`block text-[10px] font-bold leading-tight ${
+                      reached ? 'text-[#072146]' : 'text-[#072146]/45'
+                    }`}
+                  >
+                    {stepObj.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Center: Single clean focus card */}
+      {effectiveStatus === 'Pendiente' && (
+        <div className="rounded-2xl bg-white border border-[#1B4F9C]/20 p-4 space-y-3 shadow-xs">
+          <div className="flex items-baseline justify-between gap-2 border-b border-[#F4F6F9] pb-2.5">
+            <span className="text-xs font-bold text-[#072146]/70">Valor a transferir</span>
+            <span className="font-display text-2xl font-extrabold text-[#072146] tabular-nums">
+              {displayData ? formatCop(displayData.totalCop) : '—'}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F4F6F9] px-3 py-2.5 border border-[#1B4F9C]/10">
+            <div className="min-w-0">
+              <span className="block text-[11px] font-bold text-[#1B4F9C]">
+                {sameNequiDaviplata ? 'Nequi / Daviplata' : 'Nequi · Daviplata'}
+              </span>
+              <span className="font-display text-base font-extrabold text-[#072146] tabular-nums">
+                {sameNequiDaviplata
+                  ? nequiDisplay
+                  : `${nequiDisplay} · ${daviplataDisplay}`}
+              </span>
+              {bancolombiaDisplay && (
+                <span className="block text-[11px] font-semibold text-[#072146]/70 truncate">
+                  Bre-B / Bancolombia: {bancolombiaDisplay}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleCopyTransferNumber(nequiDisplay)}
+              className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#F5A623] px-3.5 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+            >
+              {copiedInline ? (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  Copiado
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  Copiar
+                </>
+              )}
+            </button>
           </div>
 
           <a
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full min-h-[54px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
+            className="w-full min-h-[50px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-3 text-sm font-extrabold text-white shadow-sm hover:brightness-110 transition text-center"
           >
             <MessageCircle className="h-5 w-5 shrink-0" />
-            📲 Enviar Pedido y Comprobante por WhatsApp
+            📲 Enviar Pedido y Pantallazo por WhatsApp
           </a>
-        </>
+
+          <p className="text-center text-xs font-extrabold text-[#C62828] leading-snug">
+            ⚠️ Envía el mensaje y la foto del pago por WhatsApp para despachar tu pedido.
+          </p>
+        </div>
       )}
 
       {effectiveStatus === 'Confirmado' && (
-        <div className="rounded-2xl bg-[#128C4A] p-4 text-center text-white space-y-2 shadow-md">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-white">
-            <ShieldCheck className="h-7 w-7" />
+        <div className="rounded-2xl bg-[#128C4A] p-4 text-center text-white space-y-1.5 shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-white/20 text-white">
+            <ShieldCheck className="h-6 w-6" />
           </div>
-          <p className="text-xs font-extrabold uppercase tracking-wider text-white/85">
-            Orden #{shortOrderCode}
-          </p>
-          <h3 className="font-display text-lg sm:text-xl font-extrabold">
+          <h3 className="font-display text-lg font-extrabold">
             ✅ ¡Pago Confirmado! Preparando tu entrega
           </h3>
           <p className="text-xs text-white/90">
@@ -292,14 +391,11 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
       )}
 
       {effectiveStatus === 'En camino' && (
-        <div className="rounded-2xl bg-[#1B4F9C] p-4 text-center text-white space-y-2 shadow-md">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F5A623] text-[#072146]">
+        <div className="rounded-2xl bg-[#1B4F9C] p-4 text-center text-white space-y-1.5 shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#F5A623] text-[#072146]">
             <Truck className="h-6 w-6" />
           </div>
-          <p className="text-xs font-extrabold uppercase tracking-wider text-[#F5A623]">
-            Orden #{shortOrderCode}
-          </p>
-          <h3 className="font-display text-lg sm:text-xl font-extrabold">
+          <h3 className="font-display text-lg font-extrabold">
             🛵 Tu domicilio va en camino
           </h3>
           <p className="text-xs text-white/90">
@@ -309,13 +405,10 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
       )}
 
       {effectiveStatus === 'Entregado' && (
-        <div className="rounded-2xl bg-[#128C4A]/15 border border-[#128C4A]/40 p-4 text-center space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#128C4A] text-white">
+        <div className="rounded-2xl bg-[#128C4A]/15 border border-[#128C4A]/40 p-4 text-center space-y-1.5">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#128C4A] text-white">
             <PackageCheck className="h-6 w-6" />
           </div>
-          <p className="text-xs font-extrabold uppercase tracking-wider text-[#128C4A]">
-            Orden #{shortOrderCode}
-          </p>
           <h3 className="font-display text-lg font-extrabold text-[#072146]">
             🎉 ¡Pedido Entregado!
           </h3>
@@ -326,13 +419,10 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
       )}
 
       {effectiveStatus === 'Cancelado' && (
-        <div className="rounded-2xl bg-[#C62828]/10 border border-[#C62828]/35 p-4 text-center space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#C62828] text-white">
+        <div className="rounded-2xl bg-[#C62828]/10 border border-[#C62828]/35 p-4 text-center space-y-1.5">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#C62828] text-white">
             <XCircle className="h-6 w-6" />
           </div>
-          <p className="text-xs font-extrabold uppercase tracking-wider text-[#C62828]">
-            Orden #{shortOrderCode}
-          </p>
           <h3 className="font-display text-lg font-extrabold text-[#C62828]">
             ❌ Pedido Cancelado
           </h3>
@@ -342,139 +432,101 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
         </div>
       )}
 
-      {/* Visual Progress Bar (non-cancelled orders) */}
-      {effectiveStatus !== 'Cancelado' && (
-        <div className="grid grid-cols-4 gap-1.5 pt-1">
-          {PROGRESS_STEPS.map((stepObj, idx) => {
-            const reached = currentStepIndex >= idx;
-            return (
-              <div key={stepObj.status} className="text-center space-y-1">
-                <div
-                  className={`h-2 rounded-full transition-colors ${
-                    reached ? 'bg-[#128C4A]' : 'bg-[#072146]/15'
-                  }`}
-                />
-                <span
-                  className={`block text-[10px] font-bold leading-tight ${
-                    reached ? 'text-[#072146]' : 'text-[#072146]/45'
-                  }`}
-                >
-                  {stepObj.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      {effectiveStatus !== 'Pendiente' && (
+        <a
+          href={whatsappUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:brightness-110 transition text-center"
+        >
+          <MessageCircle className="h-4 w-4 shrink-0" />
+          Escribir por WhatsApp a la tienda
+        </a>
       )}
 
-      {/* Sound unlock helper while Pending */}
-      {effectiveStatus === 'Pendiente' && (
-        <div className="flex items-center justify-between gap-2 rounded-xl bg-white px-3.5 py-2 border border-[#1B4F9C]/15">
-          <span className="text-[11px] font-medium text-[#072146]/75">
-            {audioNotice
-              ? '¡Sonido de confirmación activado!'
-              : 'Recibe un timbre cuando confirmemos tu pago.'}
+      {/* Lower compact section: Sound/Notifications + Order Summary */}
+      {(effectiveStatus === 'Pendiente' || effectiveStatus === 'Confirmado') && (
+        <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F4F6F9] px-3 py-2 border border-[#1B4F9C]/15">
+          <span className="text-[11px] font-medium text-[#072146]/80 min-w-0 truncate">
+            {notifPerm === 'granted' && audioActivated
+              ? 'Timbre y notificaciones activos'
+              : notifPerm === 'granted'
+                ? 'Notificaciones activas · Toca para timbre'
+                : notifPerm === 'denied'
+                  ? 'Timbre en pantalla (notificaciones bloqueadas)'
+                  : 'Avísame con timbre y notificación al confirmar'}
           </span>
           <button
             type="button"
-            onClick={handleEnableSound}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#072146] px-2.5 py-1.5 text-[11px] font-bold text-[#F5A623] shrink-0"
+            onClick={handleEnableSoundAndNotifications}
+            className={`min-h-[34px] inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold shrink-0 transition ${
+              audioActivated || notifPerm === 'granted'
+                ? 'bg-[#128C4A] text-white'
+                : 'bg-[#072146] text-[#F5A623]'
+            }`}
           >
-            <Volume2 className="h-3.5 w-3.5" />
-            {audioNotice ? 'Listo' : 'Activar timbre'}
+            {notifPerm === 'granted' ? (
+              <Bell className="h-3.5 w-3.5" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5" />
+            )}
+            <span>
+              {audioActivated || notifPerm === 'granted'
+                ? 'Activo'
+                : 'Activar timbre / notificaciones'}
+            </span>
           </button>
         </div>
       )}
 
       {listenError && (
         <p className="rounded-xl bg-[#C62828]/10 px-3 py-2 text-xs font-bold text-[#C62828]">
-          No pudimos conectar el estado en vivo. Puedes verificar por WhatsApp con el código #
-          {shortOrderCode}.
+          No pudimos conectar el estado en vivo. Verifica por WhatsApp con el código #{shortOrderCode}.
         </p>
       )}
 
-      {/* Order Summary */}
       {loading && !displayData ? (
-        <div className="rounded-xl bg-white p-4 text-center text-xs font-semibold text-[#072146]/70">
+        <div className="rounded-xl bg-[#F4F6F9] p-3 text-center text-xs font-semibold text-[#072146]/70">
           Cargando detalles del pedido #{shortOrderCode}...
         </div>
       ) : displayData ? (
-        <div className="rounded-xl bg-white p-4 border border-[#1B4F9C]/10 space-y-3 text-left">
-          <div className="space-y-1.5 border-b border-[#F4F6F9] pb-3">
-            <p className="text-xs font-extrabold uppercase tracking-wide text-[#1B4F9C]">
-              Resumen del pedido
-            </p>
-            {displayData.items.map((item, idx) => {
-              const lineTotal = (Number(item.unitPriceCop) || 0) * (Number(item.qty) || 0);
-              return (
-                <div
-                  key={`${makeCartKey(item.productId, item.temperature)}_${idx}`}
-                  className="flex items-start justify-between gap-2 text-xs text-[#072146]"
-                >
-                  <span className="min-w-0 flex-1">
-                    <strong>{Number(item.qty) || 0}x</strong> {item.name} ({item.presentation})
-                    {item.temperature !== 'N/A' ? ` · ${item.temperature}` : ''}
-                  </span>
-                  <span className="font-bold tabular-nums shrink-0">{formatCop(lineTotal)}</span>
-                </div>
-              );
-            })}
+        <div className="rounded-xl bg-[#F4F6F9] p-3.5 border border-[#1B4F9C]/10 space-y-2 text-left text-xs">
+          <div className="flex items-center justify-between font-bold text-[#1B4F9C]">
+            <span>Resumen de productos</span>
+            <span className="tabular-nums text-[#072146]">
+              Total: {formatCop(displayData.totalCop)}
+            </span>
           </div>
 
-          <div className="space-y-1 text-xs text-[#072146]/80 border-b border-[#F4F6F9] pb-3">
-            <p>
-              <strong>Entrega:</strong> {displayData.address}, {displayData.neighborhood}
-            </p>
-            <p>
-              <strong>Cliente:</strong> {displayData.customerName} · {displayData.phone}
-            </p>
-            <p>
-              <strong>Transferencia:</strong> {displayData.paymentMethod}
-              {displayData.receiptLast4 ? ` · Comprobante #${displayData.receiptLast4}` : ''}
-            </p>
+          <div className="space-y-1 text-[#072146]">
+            {displayData.items.map((item, idx) => (
+              <div
+                key={`${makeCartKey(item.productId, item.temperature)}_${idx}`}
+                className="flex items-center justify-between gap-2"
+              >
+                <span className="min-w-0 truncate">
+                  <strong>{Number(item.qty) || 0}x</strong> {item.name} ({item.presentation})
+                  {item.temperature !== 'N/A' ? ` · ${item.temperature}` : ''}
+                </span>
+                <span className="font-bold tabular-nums shrink-0">
+                  {formatCop((Number(item.unitPriceCop) || 0) * (Number(item.qty) || 0))}
+                </span>
+              </div>
+            ))}
           </div>
 
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between text-[#072146]/75">
-              <span>Subtotal</span>
-              <span className="tabular-nums font-medium">{formatCop(displayData.subtotalCop)}</span>
-            </div>
-            <div className="flex justify-between text-[#072146]/75">
-              <span>Costo de domicilio</span>
-              <span className="tabular-nums font-medium">
-                {displayData.deliveryFeeCop === 0
-                  ? 'GRATIS'
-                  : formatCop(displayData.deliveryFeeCop)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between pt-1.5 border-t border-[#F4F6F9] text-base font-extrabold text-[#072146]">
-              <span>Total</span>
-              <span className="font-display text-lg tabular-nums">
-                {formatCop(displayData.totalCop)}
-              </span>
-            </div>
-          </div>
+          <p className="pt-1.5 border-t border-[#1B4F9C]/10 text-[11px] text-[#072146]/75 truncate">
+            <strong>Entrega:</strong> {displayData.address}, {displayData.neighborhood} ·{' '}
+            {displayData.paymentMethod}
+          </p>
         </div>
       ) : null}
-
-      {/* WhatsApp native anchor for non-pending states (Pending already renders prominent primary CTA above) */}
-      {effectiveStatus !== 'Pendiente' && (
-        <a
-          href={whatsappUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="w-full min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
-        >
-          <MessageCircle className="h-5 w-5 shrink-0" />
-          Escribir por WhatsApp a la tienda
-        </a>
-      )}
 
       {onClose && (
         <button
           type="button"
           onClick={onClose}
-          className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#1B4F9C]/25 bg-white py-2.5 text-sm font-bold text-[#072146] hover:bg-[#F4F6F9] transition"
+          className="w-full min-h-[42px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#1B4F9C]/25 bg-white py-2 text-xs sm:text-sm font-bold text-[#072146] hover:bg-[#F4F6F9] transition"
         >
           <CheckCircle2 className="h-4 w-4 text-[#1B4F9C]" />
           {closeLabel}
