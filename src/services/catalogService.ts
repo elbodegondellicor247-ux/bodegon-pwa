@@ -119,6 +119,22 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
         Number.isFinite(parsedFree)
           ? Math.max(0, parsedFree)
           : DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
+      transferNequi:
+        typeof data.transferNequi === 'string' && data.transferNequi.trim()
+          ? data.transferNequi.trim()
+          : DEFAULT_STORE_SETTINGS.transferNequi,
+      transferDaviplata:
+        typeof data.transferDaviplata === 'string' && data.transferDaviplata.trim()
+          ? data.transferDaviplata.trim()
+          : DEFAULT_STORE_SETTINGS.transferDaviplata,
+      transferBancolombiaKey:
+        typeof data.transferBancolombiaKey === 'string'
+          ? data.transferBancolombiaKey.trim()
+          : DEFAULT_STORE_SETTINGS.transferBancolombiaKey,
+      transferHolderName:
+        typeof data.transferHolderName === 'string' && data.transferHolderName.trim()
+          ? data.transferHolderName.trim()
+          : DEFAULT_STORE_SETTINGS.transferHolderName,
     };
   } catch (error) {
     // Offline fallback to cached settings if available

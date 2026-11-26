@@ -23,6 +23,7 @@ import { auth, googleProvider } from '../lib/firebase';
 import { formatCop } from '../lib/format';
 import { fetchMyOrders, saveUserProfile } from '../services/orderService';
 import {
+  normalizeCustomerPaymentMethod,
   PAYMENT_METHODS,
   SCHEMA_LIMITS,
   type CustomerProfile,
@@ -37,8 +38,10 @@ interface ProfileAdminModalProps {
   user: FirebaseUser | null;
   isAdmin: boolean;
   profile: CustomerProfile;
+  lastOrderId?: string | null;
   onSaveProfileLocal: (next: CustomerProfile) => void;
   onReorderItems: (items: OrderItem[]) => void;
+  onOpenTracking: (orderId: string) => void;
   onOpenAdminPage: () => void;
 }
 
@@ -68,12 +71,17 @@ export const ProfileAdminModal: React.FC<ProfileAdminModalProps> = ({
   user,
   isAdmin,
   profile,
+  lastOrderId,
   onSaveProfileLocal,
   onReorderItems,
+  onOpenTracking,
   onOpenAdminPage,
 }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'orders'>('profile');
-  const [form, setForm] = useState<CustomerProfile>(profile);
+  const [form, setForm] = useState<CustomerProfile>({
+    ...profile,
+    preferredPayment: normalizeCustomerPaymentMethod(profile?.preferredPayment),
+  });
   const [savedNotice, setSavedNotice] = useState(false);
   const [profileError, setProfileError] = useState('');
 
@@ -91,7 +99,10 @@ export const ProfileAdminModal: React.FC<ProfileAdminModalProps> = ({
   const [reorderNotice, setReorderNotice] = useState('');
 
   useEffect(() => {
-    setForm(profile);
+    setForm({
+      ...profile,
+      preferredPayment: normalizeCustomerPaymentMethod(profile?.preferredPayment),
+    });
   }, [profile]);
 
   useEffect(() => {
@@ -259,6 +270,27 @@ export const ProfileAdminModal: React.FC<ProfileAdminModalProps> = ({
           {!user ? (
             /* AUTH GATE: Google, Correo y Contraseña, o Pedir como invitado */
             <div className="space-y-5">
+              {lastOrderId && (
+                <div className="rounded-2xl bg-[#072146] p-4 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-extrabold uppercase tracking-wide text-[#F5A623]">
+                      Pedido reciente guardado en este dispositivo
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold">
+                      Orden #{lastOrderId.slice(0, 8).toUpperCase()}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onOpenTracking(lastOrderId)}
+                    className="min-h-[42px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#F5A623] px-4 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                  >
+                    <Package className="h-4 w-4" />
+                    Ver seguimiento en vivo
+                  </button>
+                </div>
+              )}
+
               <div className="rounded-2xl bg-[#F4F6F9] p-4 sm:p-5 border border-[#1B4F9C]/15 space-y-3">
                 <div>
                   <h3 className="font-display text-base font-extrabold text-[#072146]">
@@ -591,18 +623,28 @@ export const ProfileAdminModal: React.FC<ProfileAdminModalProps> = ({
                         ))}
                       </ul>
 
-                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#1B4F9C]/10">
-                        <span className="text-xs text-[#072146]/65 truncate">
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#1B4F9C]/10">
+                        <span className="text-xs text-[#072146]/65 truncate max-w-[210px]">
                           {order.address}, {order.neighborhood}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleReorder(order)}
-                          className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#F5A623] px-3.5 py-2 text-xs font-extrabold text-[#072146] hover:brightness-95 transition whitespace-nowrap shrink-0"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                          Volver a pedir
-                        </button>
+                        <div className="flex items-center gap-2 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => onOpenTracking(order.id)}
+                            className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#072146] px-3 py-2 text-xs font-bold text-white hover:bg-[#1B4F9C] transition whitespace-nowrap shrink-0"
+                          >
+                            <Package className="h-3.5 w-3.5 text-[#F5A623]" />
+                            Seguimiento en vivo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleReorder(order)}
+                            className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#F5A623] px-3.5 py-2 text-xs font-extrabold text-[#072146] hover:brightness-95 transition whitespace-nowrap shrink-0"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Volver a pedir
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

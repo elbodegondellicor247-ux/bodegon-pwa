@@ -21,6 +21,30 @@
           "type": "number",
           "description": "Monto mínimo en COP para envío gratis."
         },
+        "transferNequi": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Número Nequi configurado para pago anticipado."
+        },
+        "transferDaviplata": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Número Daviplata configurado para pago anticipado."
+        },
+        "transferBancolombiaKey": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Llave Bre-B o cuenta Bancolombia para transferencias."
+        },
+        "transferHolderName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Nombre del titular de las cuentas receptoras."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
@@ -156,6 +180,9 @@
         "paymentMethod": {
           "type": "string",
           "enum": [
+            "Nequi",
+            "Daviplata",
+            "Bancolombia / Bre-B",
             "Nequi / Daviplata (Transferencia)",
             "Efectivo contraentrega",
             "Datáfono contraentrega",
@@ -164,6 +191,12 @@
             "Datáfono"
           ],
           "description": "Método de pago seleccionado."
+        },
+        "receiptLast4": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 4,
+          "description": "Últimos 4 dígitos opcionales del comprobante de transferencia."
         },
         "cashTenderCop": {
           "type": "number",
@@ -475,6 +508,9 @@
         "preferredPayment": {
           "type": "string",
           "enum": [
+            "Nequi",
+            "Daviplata",
+            "Bancolombia / Bre-B",
             "Nequi / Daviplata (Transferencia)",
             "Efectivo contraentrega",
             "Datáfono contraentrega"

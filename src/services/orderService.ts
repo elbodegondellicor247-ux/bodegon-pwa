@@ -31,6 +31,7 @@ import {
 import { formatCop, getColombiaDateKey, sanitizeText } from '../lib/format';
 import {
   ADMIN_EMAIL,
+  normalizeCustomerPaymentMethod,
   SCHEMA_LIMITS,
   WHATSAPP_NUMBER,
   type AnyOrderPaymentMethod,
@@ -45,6 +46,33 @@ import {
   type StoreSettings,
 } from '../types/store';
 import { clearCatalogCache } from './catalogService';
+
+const LAST_ORDER_STORAGE_KEY = 'bodegon_last_order_id_v1';
+
+export function saveGuestLastOrderId(orderId: string): void {
+  try {
+    localStorage.setItem(LAST_ORDER_STORAGE_KEY, orderId);
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function getGuestLastOrderId(): string | null {
+  try {
+    const raw = localStorage.getItem(LAST_ORDER_STORAGE_KEY);
+    return raw && raw.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearGuestLastOrderId(): void {
+  try {
+    localStorage.removeItem(LAST_ORDER_STORAGE_KEY);
+  } catch {
+    // Ignore
+  }
+}
 
 export interface StockShortageItem {
   productId: string;
@@ -77,7 +105,8 @@ export interface CreateOrderInput {
   neighborhood: string;
   referencePoint: string;
   paymentMethod: PaymentMethod;
-  cashTenderCop: number;
+  receiptLast4?: string;
+  cashTenderCop?: number;
   notes: string;
   items: CartItem[];
   deliveryFeeCop: number;
@@ -102,6 +131,21 @@ export function classifyPaymentChannel(
   return 'nequi';
 }
 
+export function formatColombianWhatsAppPhone(rawPhone: string): string {
+  const digits = rawPhone.replace(/\D/g, '');
+  if (!digits) return WHATSAPP_NUMBER;
+  if (digits.startsWith('57') && digits.length >= 12) return digits;
+  if (digits.length === 10) return `57${digits}`;
+  return digits;
+}
+
+export function buildAdminConfirmWhatsAppUrl(order: OrderRecord): string {
+  const phone = formatColombianWhatsAppPhone(order.phone || '');
+  const shortId = order.id.slice(0, 8).toUpperCase();
+  const msg = `¡Hola ${order.customerName}! Tu pago y pedido #${shortId} en El Bodegón del Licor fueron CONFIRMADOS ✅. Ya estamos preparando tu entrega.`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+}
+
 export function buildWhatsAppOrderUrl(params: {
   orderId: string;
   customerName: string;
@@ -110,7 +154,8 @@ export function buildWhatsAppOrderUrl(params: {
   neighborhood: string;
   referencePoint: string;
   paymentMethod: AnyOrderPaymentMethod;
-  cashTenderCop: number;
+  receiptLast4?: string;
+  cashTenderCop?: number;
   notes: string;
   items: OrderItem[];
   subtotalCop: number;
@@ -120,7 +165,7 @@ export function buildWhatsAppOrderUrl(params: {
   const lines: string[] = [
     '*EL BODEGÓN DEL LICOR (24/7)*',
     `Orden #${params.orderId}`,
-    'Origen: App PWA',
+    'Origen: App PWA · Pago Anticipado',
     '',
     '*Productos:*',
     ...params.items.map((item) => {
@@ -132,7 +177,7 @@ export function buildWhatsAppOrderUrl(params: {
     '',
     `Subtotal: ${formatCop(params.subtotalCop)}`,
     `Domicilio: ${params.deliveryFeeCop === 0 ? 'GRATIS' : formatCop(params.deliveryFeeCop)}`,
-    `*TOTAL: ${formatCop(params.totalCop)}*`,
+    `*TOTAL PAGADO: ${formatCop(params.totalCop)}*`,
     '',
     '*Datos de entrega:*',
     `Cliente: ${params.customerName}`,
@@ -145,14 +190,11 @@ export function buildWhatsAppOrderUrl(params: {
     lines.push(`Punto de referencia: ${params.referencePoint.trim()}`);
   }
 
-  lines.push(`Pago: ${params.paymentMethod}`);
-
-  if (
-    (params.paymentMethod === 'Efectivo contraentrega' || params.paymentMethod === 'Efectivo') &&
-    params.cashTenderCop > 0
-  ) {
-    lines.push(`Paga con: ${formatCop(params.cashTenderCop)}`);
+  lines.push(`Transferencia: ${params.paymentMethod}`);
+  if (params.receiptLast4?.trim()) {
+    lines.push(`Ref. comprobante (últ. 4 dígitos): ${params.receiptLast4.trim()}`);
   }
+  lines.push('📎 Adjunto comprobante de transferencia.');
 
   if (params.notes.trim()) {
     lines.push(`Notas: ${params.notes.trim()}`);
@@ -173,6 +215,7 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
   const orderId = orderRef.id;
   const dateKey = getColombiaDateKey();
   const statsRef = doc(db, 'daily_stats', dateKey);
+  const settingsRef = doc(db, 'settings', 'store');
 
   const boundedItems: OrderItem[] = input.items.slice(0, SCHEMA_LIMITS.ORDER_ITEMS_MAX).map((ci) => ({
     productId: sanitizeText(ci.product.id, 128),
@@ -203,10 +246,11 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
   const neighborhood = sanitizeText(input.neighborhood, SCHEMA_LIMITS.NEIGHBORHOOD_MAX);
   const referencePoint = sanitizeText(input.referencePoint, SCHEMA_LIMITS.REFERENCE_MAX);
   const notes = sanitizeText(input.notes, SCHEMA_LIMITS.NOTES_MAX);
-  const cashTenderCop =
-    input.paymentMethod === 'Efectivo contraentrega'
-      ? Math.max(0, Math.round(input.cashTenderCop || 0))
-      : 0;
+  const receiptLast4 = sanitizeText(
+    (input.receiptLast4 ?? '').replace(/[^a-zA-Z0-9]/g, ''),
+    SCHEMA_LIMITS.RECEIPT_LAST4_MAX
+  );
+  const cashTenderCop = 0;
 
   const channel = classifyPaymentChannel(input.paymentMethod);
 
@@ -214,7 +258,7 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
   try {
     await runTransaction(db, async (transaction) => {
       const productIds = Array.from(qtyByProduct.keys());
-      const [productReads, statsSnap] = await Promise.all([
+      const [productReads, statsSnap, settingsSnap] = await Promise.all([
         Promise.all(
           productIds.map(async (pid) => {
             const ref = doc(db, 'products', pid);
@@ -223,6 +267,7 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
           })
         ),
         transaction.get(statsRef),
+        transaction.get(settingsRef),
       ]);
 
       const shortages: StockShortageItem[] = [];
@@ -279,6 +324,7 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
         neighborhood,
         referencePoint,
         paymentMethod: input.paymentMethod,
+        ...(receiptLast4 ? { receiptLast4 } : {}),
         cashTenderCop,
         notes,
         items: itemsWithLiveCost,
@@ -327,9 +373,17 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
         if (cardDelta > 0) statsUpdate.salesCardCop = increment(cardDelta);
         transaction.update(statsRef, statsUpdate);
       }
+
+      if (settingsSnap.exists()) {
+        transaction.update(settingsRef, {
+          catalogVersion: increment(1),
+          updatedAt: serverTimestamp(),
+        });
+      }
     });
     savedToFirestore = true;
     clearCatalogCache();
+    saveGuestLastOrderId(orderId);
   } catch (error) {
     if (error instanceof InsufficientStockError) {
       throw error;
@@ -345,6 +399,7 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
     neighborhood,
     referencePoint,
     paymentMethod: input.paymentMethod,
+    receiptLast4,
     cashTenderCop,
     notes,
     items: boundedItems,
@@ -373,8 +428,9 @@ export async function fetchUserProfile(uid: string): Promise<CustomerProfile | n
       address: String(data.address ?? ''),
       neighborhood: String(data.neighborhood ?? ''),
       referencePoint: String(data.referencePoint ?? ''),
-      preferredPayment:
-        (data.preferredPayment as PaymentMethod) || 'Nequi / Daviplata (Transferencia)',
+      preferredPayment: normalizeCustomerPaymentMethod(
+        typeof data.preferredPayment === 'string' ? data.preferredPayment : undefined
+      ),
       email: typeof data.email === 'string' ? data.email : undefined,
       role: data.role === 'admin' ? 'admin' : data.role === 'customer' ? 'customer' : undefined,
       isAdmin: typeof data.isAdmin === 'boolean' ? data.isAdmin : undefined,
@@ -398,7 +454,7 @@ export async function saveUserProfile(uid: string, profile: CustomerProfile): Pr
       address: sanitizeText(profile.address, SCHEMA_LIMITS.ADDRESS_MAX),
       neighborhood: sanitizeText(profile.neighborhood, SCHEMA_LIMITS.NEIGHBORHOOD_MAX),
       referencePoint: sanitizeText(profile.referencePoint, SCHEMA_LIMITS.REFERENCE_MAX),
-      preferredPayment: profile.preferredPayment,
+      preferredPayment: normalizeCustomerPaymentMethod(profile.preferredPayment),
       role: adminUser ? 'admin' : 'customer',
       isAdmin: adminUser,
       updatedAt: serverTimestamp(),
@@ -427,7 +483,7 @@ export async function ensureAdminUserDocument(firebaseUser: FirebaseUser): Promi
         address: '',
         neighborhood: '',
         referencePoint: '',
-        preferredPayment: 'Nequi / Daviplata (Transferencia)',
+        preferredPayment: 'Nequi',
         role: 'admin',
         isAdmin: true,
         updatedAt: serverTimestamp(),
@@ -460,8 +516,9 @@ export async function ensureAdminUserDocument(firebaseUser: FirebaseUser): Promi
           String(existing.referencePoint ?? ''),
           SCHEMA_LIMITS.REFERENCE_MAX
         ),
-        preferredPayment:
-          (existing.preferredPayment as PaymentMethod) || 'Nequi / Daviplata (Transferencia)',
+        preferredPayment: normalizeCustomerPaymentMethod(
+          typeof existing.preferredPayment === 'string' ? existing.preferredPayment : undefined
+        ),
         role: 'admin',
         isAdmin: true,
         updatedAt: serverTimestamp(),
@@ -483,8 +540,8 @@ function mapDocToOrder(id: string, data: Record<string, unknown>): OrderRecord {
     address: String(data.address ?? ''),
     neighborhood: String(data.neighborhood ?? ''),
     referencePoint: String(data.referencePoint ?? ''),
-    paymentMethod:
-      (data.paymentMethod as AnyOrderPaymentMethod) || 'Nequi / Daviplata (Transferencia)',
+    paymentMethod: (data.paymentMethod as AnyOrderPaymentMethod) || 'Nequi',
+    receiptLast4: typeof data.receiptLast4 === 'string' ? data.receiptLast4 : undefined,
     cashTenderCop: Number(data.cashTenderCop ?? 0),
     notes: String(data.notes ?? ''),
     items: Array.isArray(data.items) ? (data.items as OrderItem[]) : [],
@@ -497,6 +554,27 @@ function mapDocToOrder(id: string, data: Record<string, unknown>): OrderRecord {
     origin: (data.origin as OrderOrigin) || 'App PWA',
     createdAtMs: rawCreatedAt?.toMillis ? rawCreatedAt.toMillis() : Date.now(),
   };
+}
+
+export function subscribeOrderById(
+  orderId: string,
+  onOrder: (order: OrderRecord | null) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  const ref = doc(db, 'orders', orderId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onOrder(null);
+        return;
+      }
+      onOrder(mapDocToOrder(snap.id, snap.data() as Record<string, unknown>));
+    },
+    (err) => {
+      if (onError) onError(err);
+    }
+  );
 }
 
 export async function fetchMyOrders(uid: string): Promise<OrderRecord[]> {
@@ -533,7 +611,7 @@ export function subscribeLiveAdminOrders(
 
   const activeQuery = query(
     collection(db, 'orders'),
-    where('status', 'in', ['Pendiente', 'En camino']),
+    where('status', 'in', ['Pendiente', 'Confirmado', 'En camino']),
     limit(25)
   );
 
@@ -630,10 +708,41 @@ export async function updateOrderStatusAdmin(orderId: string, status: OrderStatu
           ? data.dateKey
           : getColombiaDateKey(rawCreatedAt?.toDate ? rawCreatedAt.toDate() : new Date());
 
+      const orderItems = Array.isArray(data.items) ? (data.items as OrderItem[]) : [];
+      const qtyByProduct = new Map<string, number>();
+      orderItems.forEach((item) => {
+        if (!item?.productId) return;
+        const q = Math.max(0, Math.floor(Number(item.qty) || 0));
+        if (q > 0) {
+          qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + q);
+        }
+      });
+
+      const productIds = Array.from(qtyByProduct.keys());
       const statsRef = doc(db, 'daily_stats', dateKey);
-      const statsSnap = await transaction.get(statsRef);
+
+      // All reads MUST execute before any writes
+      const [statsSnap, ...productReads] = await Promise.all([
+        transaction.get(statsRef),
+        ...productIds.map(async (pid) => {
+          const ref = doc(db, 'products', pid);
+          const snap = await transaction.get(ref);
+          return { pid, ref, snap };
+        }),
+      ]);
 
       transaction.update(orderRef, { status: 'Cancelado' });
+
+      productReads.forEach(({ pid, ref, snap }) => {
+        if (!snap.exists()) return;
+        const restoreQty = qtyByProduct.get(pid) ?? 0;
+        if (restoreQty <= 0) return;
+        const currentStock = Math.max(0, Math.floor(Number(snap.data().stock ?? 0)));
+        transaction.update(ref, {
+          stock: currentStock + restoreQty,
+          updatedAt: serverTimestamp(),
+        });
+      });
 
       if (statsSnap.exists()) {
         const sData = statsSnap.data();
@@ -662,6 +771,7 @@ export async function updateOrderStatusAdmin(orderId: string, status: OrderStatu
         transaction.update(statsRef, statsPatch);
       }
     });
+    clearCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -751,6 +861,22 @@ export async function publishCatalogVersionAdmin(currentSettings: StoreSettings)
       storeOpen: Boolean(currentSettings.storeOpen),
       deliveryFeeCop: Math.max(0, Math.round(currentSettings.deliveryFeeCop)),
       freeDeliveryMinCop: Math.max(0, Math.round(currentSettings.freeDeliveryMinCop)),
+      transferNequi: sanitizeText(
+        currentSettings.transferNequi || DEFAULT_STORE_SETTINGS.transferNequi,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferDaviplata: sanitizeText(
+        currentSettings.transferDaviplata || DEFAULT_STORE_SETTINGS.transferDaviplata,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferBancolombiaKey: sanitizeText(
+        currentSettings.transferBancolombiaKey || '',
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferHolderName: sanitizeText(
+        currentSettings.transferHolderName || DEFAULT_STORE_SETTINGS.transferHolderName,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
       updatedAt: serverTimestamp(),
     });
     clearCatalogCache();
@@ -777,6 +903,22 @@ export async function updateStoreSettingsAdmin(nextSettings: StoreSettings): Pro
       storeOpen: Boolean(nextSettings.storeOpen),
       deliveryFeeCop: Math.max(0, Math.round(nextSettings.deliveryFeeCop)),
       freeDeliveryMinCop: Math.max(0, Math.round(nextSettings.freeDeliveryMinCop)),
+      transferNequi: sanitizeText(
+        nextSettings.transferNequi || DEFAULT_STORE_SETTINGS.transferNequi,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferDaviplata: sanitizeText(
+        nextSettings.transferDaviplata || DEFAULT_STORE_SETTINGS.transferDaviplata,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferBancolombiaKey: sanitizeText(
+        nextSettings.transferBancolombiaKey || '',
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
+      transferHolderName: sanitizeText(
+        nextSettings.transferHolderName || DEFAULT_STORE_SETTINGS.transferHolderName,
+        SCHEMA_LIMITS.TRANSFER_FIELD_MAX
+      ),
       updatedAt: serverTimestamp(),
     });
     clearCatalogCache();
@@ -812,6 +954,10 @@ export async function seedColombianCatalogAdmin(currentVersion: number): Promise
       storeOpen: DEFAULT_STORE_SETTINGS.storeOpen,
       deliveryFeeCop: DEFAULT_STORE_SETTINGS.deliveryFeeCop,
       freeDeliveryMinCop: DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
+      transferNequi: DEFAULT_STORE_SETTINGS.transferNequi,
+      transferDaviplata: DEFAULT_STORE_SETTINGS.transferDaviplata,
+      transferBancolombiaKey: DEFAULT_STORE_SETTINGS.transferBancolombiaKey,
+      transferHolderName: DEFAULT_STORE_SETTINGS.transferHolderName,
       updatedAt: serverTimestamp(),
     });
 

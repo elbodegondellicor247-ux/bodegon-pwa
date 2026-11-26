@@ -10,6 +10,7 @@ import {
   KeyRound,
   LogIn,
   LogOut,
+  MessageCircle,
   Minus,
   Package,
   Plus,
@@ -32,10 +33,12 @@ import { ExpensesTab } from './admin/ExpensesTab';
 import { FinancialSummaryTab } from './admin/FinancialSummaryTab';
 import { PosQuickSaleModal } from './admin/PosQuickSaleModal';
 import { PurchasesTab } from './admin/PurchasesTab';
+import { playAdminUrgentAlarm, unlockAudioContext } from '../lib/audio';
 import { auth, googleProvider, isBootstrappedAdmin } from '../lib/firebase';
 import { formatCop } from '../lib/format';
 import {
   adjustProductStockAdmin,
+  buildAdminConfirmWhatsAppUrl,
   deleteProductAdmin,
   fetchAllProductsAdmin,
   fetchOlderAdminOrders,
@@ -75,39 +78,6 @@ function getStoredAdminPin(): string {
   }
 }
 
-function playNewOrderChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
-
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(880, now);
-    gain1.gain.setValueAtTime(0.08, now);
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.16);
-
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(1174.66, now + 0.14);
-    gain2.gain.setValueAtTime(0.1, now + 0.14);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.14);
-    osc2.stop(now + 0.35);
-  } catch {
-    // Ignore audio context block before user gesture
-  }
-}
-
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   user,
   isAdmin,
@@ -130,6 +100,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     'orders'
   );
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [notice, setNotice] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
   const [busy, setBusy] = useState(false);
@@ -210,7 +181,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
             }
           });
           if (hasNewOrder && soundEnabled) {
-            playNewOrderChime();
+            playAdminUrgentAlarm();
           }
         }
       },
@@ -223,6 +194,20 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
     return () => unsub();
   }, [effectiveIsAdmin, pinUnlocked, soundEnabled]);
+
+  const pendingCount = liveOrders.filter((o) => o.status === 'Pendiente').length;
+
+  // Alarma sonora persistente cada 3 segundos mientras exista al menos un pedido "Pendiente"
+  useEffect(() => {
+    if (!effectiveIsAdmin || !pinUnlocked || !soundEnabled || pendingCount === 0) {
+      return;
+    }
+    playAdminUrgentAlarm();
+    const intervalId = window.setInterval(() => {
+      playAdminUrgentAlarm();
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [effectiveIsAdmin, pinUnlocked, soundEnabled, pendingCount]);
 
   const loadInventory = async () => {
     setLoadingProducts(true);
@@ -291,6 +276,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   const handleVerifyPin = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput.trim() === getStoredAdminPin()) {
+      const unlocked = unlockAudioContext();
+      if (unlocked) setAudioUnlocked(true);
       setPinUnlocked(true);
       setPinError('');
     } else {
@@ -305,6 +292,18 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       setOlderOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o))
       );
+      if (nextStatus === 'Cancelado') {
+        await loadInventory();
+        setPendingPublish(true);
+        setFinanceRefreshSignal((n) => n + 1);
+        setNotice(
+          `Pedido #${orderId.slice(0, 8).toUpperCase()} cancelado y unidades devueltas al inventario.`
+        );
+      } else if (nextStatus === 'Confirmado') {
+        setNotice(
+          `Pago del pedido #${orderId.slice(0, 8).toUpperCase()} confirmado. El cliente ya ve el cambio en vivo.`
+        );
+      }
     } catch {
       setErrorBanner('No se pudo actualizar el estado del pedido.');
     }
@@ -352,7 +351,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     setBusy(true);
     setNotice('');
     try {
-      const next = {
+      const next: StoreSettings = {
         ...settingsDraft,
         catalogVersion: settingsDraft.catalogVersion + 1,
       };
@@ -360,7 +359,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       setSettingsDraft(next);
       onStoreSettingsUpdated(next);
       setPendingPublish(false);
-      setNotice(`Tarifa de domicilio guardada y publicada (v${next.catalogVersion}).`);
+      setNotice(`Tarifas y datos de transferencia guardados y publicados (v${next.catalogVersion}).`);
     } catch {
       setErrorBanner('Error al guardar configuración de tienda.');
     } finally {
@@ -659,8 +658,22 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   }
 
   const allDisplayedOrders = [...liveOrders, ...olderOrders];
-  const pendingCount = liveOrders.filter((o) => o.status === 'Pendiente').length;
   const onTheWayCount = liveOrders.filter((o) => o.status === 'En camino').length;
+
+  const handleToggleAlarm = () => {
+    unlockAudioContext();
+    if (!audioUnlocked || !soundEnabled) {
+      setAudioUnlocked(true);
+      setSoundEnabled(true);
+      setNotice('🔔 Alarma sonora 24/7 activada y desbloqueada en este dispositivo.');
+      if (pendingCount > 0) {
+        playAdminUrgentAlarm();
+      }
+    } else {
+      setSoundEnabled(false);
+      setNotice('Alarma sonora pausada manualmente.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F4F6F9] text-[#072146]">
@@ -698,17 +711,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
             <button
               type="button"
-              onClick={() => setSoundEnabled((v) => !v)}
-              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#1B4F9C] px-3 text-xs font-bold text-white hover:bg-[#1B4F9C]/40 transition whitespace-nowrap"
-              title="Sonido de alerta para pedidos nuevos"
+              onClick={handleToggleAlarm}
+              className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-extrabold transition whitespace-nowrap ${
+                !audioUnlocked || !soundEnabled
+                  ? 'bg-[#C62828] text-white ring-2 ring-[#F5A623] hover:brightness-110'
+                  : 'border border-[#128C4A] bg-[#128C4A]/20 text-white hover:bg-[#128C4A]/35'
+              }`}
+              title="Desbloquear y activar alarma sonora persistente 24/7"
             >
               {soundEnabled ? (
                 <Bell className="h-4 w-4 text-[#F5A623]" />
               ) : (
-                <BellOff className="h-4 w-4 text-white/60" />
+                <BellOff className="h-4 w-4 text-white/70" />
               )}
-              <span className="hidden md:inline">
-                {soundEnabled ? 'Alerta activa' : 'Silenciado'}
+              <span>
+                {!audioUnlocked || !soundEnabled
+                  ? '🔔 Activar Alarma Sonora 24/7'
+                  : '🔔 Alarma 24/7 Activa'}
               </span>
             </button>
 
@@ -811,6 +830,39 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       </header>
 
       <main className="mx-auto max-w-7xl px-3 sm:px-6 py-5 space-y-5">
+        {pendingCount > 0 && (
+          <div
+            role="alert"
+            className="animate-pulse rounded-2xl bg-[#C62828] px-4 py-3.5 text-white shadow-lg flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="font-display text-sm sm:text-base font-extrabold tracking-wide">
+                🚨 ¡TIENES PEDIDOS PENDIENTES POR CONFIRMAR! ({pendingCount})
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {(!audioUnlocked || !soundEnabled) && (
+                <button
+                  type="button"
+                  onClick={handleToggleAlarm}
+                  className="min-h-[36px] rounded-xl bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146]"
+                >
+                  Sonar Alarma
+                </button>
+              )}
+              {tab !== 'orders' && (
+                <button
+                  type="button"
+                  onClick={() => setTab('orders')}
+                  className="min-h-[36px] rounded-xl bg-white px-3 text-xs font-extrabold text-[#C62828]"
+                >
+                  Ver Pedidos
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {notice && (
           <div className="rounded-xl bg-[#128C4A]/15 border border-[#128C4A]/30 px-4 py-3 text-xs sm:text-sm font-bold text-[#128C4A] flex items-center gap-2">
             <Check className="h-4 w-4 shrink-0" />
@@ -876,11 +928,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                               className={`rounded-md px-2 py-0.5 text-[11px] font-extrabold ${
                                 order.status === 'Pendiente'
                                   ? 'bg-[#C62828] text-white'
-                                  : order.status === 'En camino'
-                                    ? 'bg-[#F5A623] text-[#072146]'
-                                    : order.status === 'Entregado'
-                                      ? 'bg-[#128C4A] text-white'
-                                      : 'bg-[#072146]/15 text-[#072146]'
+                                  : order.status === 'Confirmado'
+                                    ? 'bg-[#128C4A]/20 text-[#128C4A]'
+                                    : order.status === 'En camino'
+                                      ? 'bg-[#F5A623] text-[#072146]'
+                                      : order.status === 'Entregado'
+                                        ? 'bg-[#128C4A] text-white'
+                                        : 'bg-[#072146]/15 text-[#072146]'
                               }`}
                             >
                               {order.status}
@@ -910,6 +964,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                         <div className="text-left sm:text-right">
                           <span className="block text-[11px] text-[#072146]/65">
                             {order.paymentMethod}
+                            {order.receiptLast4 && ` · Comp. #${order.receiptLast4}`}
                             {order.cashTenderCop > 0 &&
                               ` (Paga con ${formatCop(order.cashTenderCop)})`}
                           </span>
@@ -957,14 +1012,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
                       {/* Quick Status Action Buttons */}
                       <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#F4F6F9]">
-                        <button
-                          type="button"
-                          disabled={isTerminal || order.status === 'Pendiente'}
-                          onClick={() => handleStatusChange(order.id, 'Pendiente')}
-                          className="min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-xs font-bold text-[#072146] hover:bg-[#F4F6F9] disabled:opacity-40 transition"
-                        >
-                          Pendiente
-                        </button>
+                        {order.status === 'Pendiente' && (
+                          <button
+                            type="button"
+                            onClick={() => handleStatusChange(order.id, 'Confirmado')}
+                            className="min-h-[42px] rounded-xl bg-[#128C4A] px-4 text-xs font-extrabold text-white hover:brightness-110 transition shadow-sm"
+                          >
+                            ✅ Confirmar Pago y Pedido
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={isTerminal || order.status === 'En camino'}
@@ -977,17 +1033,28 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                           type="button"
                           disabled={isTerminal}
                           onClick={() => handleStatusChange(order.id, 'Entregado')}
-                          className="min-h-[40px] rounded-xl bg-[#128C4A] px-3.5 text-xs font-extrabold text-white hover:brightness-110 disabled:opacity-40 transition"
+                          className="min-h-[40px] rounded-xl bg-[#072146] px-3.5 text-xs font-extrabold text-white hover:bg-[#1B4F9C] disabled:opacity-40 transition"
                         >
                           Entregado
                         </button>
+                        {order.phone && (
+                          <a
+                            href={buildAdminConfirmWhatsAppUrl(order)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#128C4A] bg-[#128C4A]/10 px-3 text-xs font-extrabold text-[#128C4A] hover:bg-[#128C4A] hover:text-white transition"
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            📲 Avisar por WhatsApp
+                          </a>
+                        )}
                         <button
                           type="button"
                           disabled={isTerminal}
                           onClick={() => handleStatusChange(order.id, 'Cancelado')}
                           className="min-h-[40px] rounded-xl border border-[#C62828]/40 px-3 text-xs font-bold text-[#C62828] hover:bg-[#C62828]/10 disabled:opacity-40 transition ml-auto"
                         >
-                          Cancelado
+                          Cancelado (Devolver stock)
                         </button>
                       </div>
                     </article>
@@ -1400,11 +1467,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
               )}
             </section>
 
-            {/* Store Delivery & PIN Settings */}
+            {/* Store Delivery, Transfer Accounts & PIN Settings */}
             <section className="rounded-2xl bg-white p-4 sm:p-6 border border-[#1B4F9C]/20 grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
                 <h3 className="font-display text-sm font-extrabold text-[#072146]">
-                  Tarifa de domicilio & envío gratis
+                  Tarifa de domicilio & cuentas para transferencia
                 </h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -1439,6 +1506,74 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                       className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm tabular-nums"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                      Número Nequi
+                    </label>
+                    <input
+                      type="text"
+                      value={settingsDraft.transferNequi}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          transferNequi: e.target.value,
+                        })
+                      }
+                      placeholder="304 3806922"
+                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                      Número Daviplata
+                    </label>
+                    <input
+                      type="text"
+                      value={settingsDraft.transferDaviplata}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          transferDaviplata: e.target.value,
+                        })
+                      }
+                      placeholder="304 3806922"
+                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                      Llave Bre-B / Bancolombia
+                    </label>
+                    <input
+                      type="text"
+                      value={settingsDraft.transferBancolombiaKey}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          transferBancolombiaKey: e.target.value,
+                        })
+                      }
+                      placeholder="Ej. @bodegon247 o cta ahorros"
+                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                      Titular de la cuenta
+                    </label>
+                    <input
+                      type="text"
+                      value={settingsDraft.transferHolderName}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          transferHolderName: e.target.value,
+                        })
+                      }
+                      placeholder="El Bodegón del Licor"
+                      className="w-full min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    />
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -1446,7 +1581,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                   onClick={handleSaveDeliverySettings}
                   className="min-h-[42px] rounded-xl bg-[#072146] px-4 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
                 >
-                  Guardar tarifas y publicar
+                  Guardar tarifas, transferencias y publicar
                 </button>
               </div>
 

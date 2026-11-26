@@ -5,6 +5,10 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   storeOpen: true,
   deliveryFeeCop: 4000,
   freeDeliveryMinCop: 120000,
+  transferNequi: '304 3806922',
+  transferDaviplata: '304 3806922',
+  transferBancolombiaKey: '',
+  transferHolderName: 'El Bodegón del Licor',
 };
 
 const IMG_BEER = '/src/assets/images/beer_sixpack_studio_1795561817621.jpg';

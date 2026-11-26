@@ -10,14 +10,16 @@ export type StorageCategory = Exclude<ProductCategory, 'Todo'>;
 
 export type TemperatureOption = 'Fría' | 'Al clima' | 'N/A';
 
-export type PaymentMethod =
+export type PaymentMethod = 'Nequi' | 'Daviplata' | 'Bancolombia / Bre-B';
+
+export type LegacyPaymentMethod =
   | 'Nequi / Daviplata (Transferencia)'
   | 'Efectivo contraentrega'
   | 'Datáfono contraentrega';
 
 export type PosPaymentMethod = 'Efectivo' | 'Nequi / Daviplata' | 'Datáfono';
 
-export type AnyOrderPaymentMethod = PaymentMethod | PosPaymentMethod;
+export type AnyOrderPaymentMethod = PaymentMethod | PosPaymentMethod | LegacyPaymentMethod;
 
 export type OrderOrigin = 'App PWA' | 'POS / WhatsApp';
 
@@ -59,6 +61,10 @@ export interface StoreSettings {
   storeOpen: boolean;
   deliveryFeeCop: number;
   freeDeliveryMinCop: number;
+  transferNequi: string;
+  transferDaviplata: string;
+  transferBancolombiaKey: string;
+  transferHolderName: string;
 }
 
 export interface CartItem {
@@ -99,6 +105,7 @@ export interface OrderRecord {
   neighborhood: string;
   referencePoint: string;
   paymentMethod: AnyOrderPaymentMethod;
+  receiptLast4?: string;
   cashTenderCop: number;
   notes: string;
   items: OrderItem[];
@@ -181,10 +188,16 @@ export const STORAGE_CATEGORIES: StorageCategory[] = [
 ];
 
 export const PAYMENT_METHODS: PaymentMethod[] = [
-  'Nequi / Daviplata (Transferencia)',
-  'Efectivo contraentrega',
-  'Datáfono contraentrega',
+  'Nequi',
+  'Daviplata',
+  'Bancolombia / Bre-B',
 ];
+
+export function normalizeCustomerPaymentMethod(raw?: string): PaymentMethod {
+  if (raw === 'Daviplata') return 'Daviplata';
+  if (raw === 'Bancolombia / Bre-B') return 'Bancolombia / Bre-B';
+  return 'Nequi';
+}
 
 export const POS_PAYMENT_METHODS: PosPaymentMethod[] = [
   'Efectivo',
@@ -235,4 +248,6 @@ export const SCHEMA_LIMITS = {
   SUPPLIER_MAX: 120,
   INVOICE_MAX: 60,
   CONCEPT_MAX: 140,
+  RECEIPT_LAST4_MAX: 4,
+  TRANSFER_FIELD_MAX: 80,
 };

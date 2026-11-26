@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, SearchX } from 'lucide-react';
+import { Loader2, Package, SearchX, X } from 'lucide-react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
@@ -8,6 +8,7 @@ import { CartCheckoutDrawer } from './components/CartCheckoutDrawer';
 import { CartFloatingBar } from './components/CartFloatingBar';
 import { CategoryBar } from './components/CategoryBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { OrderTrackingView } from './components/OrderTrackingView';
 import { ProductCard } from './components/ProductCard';
 import { ProfileAdminModal } from './components/ProfileAdminModal';
 import { PWAInstallBanner } from './components/PWAInstallBanner';
@@ -25,18 +26,21 @@ import {
   searchFirestoreProducts,
 } from './services/catalogService';
 import {
+  clearGuestLastOrderId,
   ensureAdminUserDocument,
   fetchUserProfile,
+  getGuestLastOrderId,
   type StockShortageItem,
 } from './services/orderService';
-import type {
-  CartItem,
-  CustomerProfile,
-  OrderItem,
-  Product,
-  ProductCategory,
-  StoreSettings,
-  TemperatureOption,
+import {
+  normalizeCustomerPaymentMethod,
+  type CartItem,
+  type CustomerProfile,
+  type OrderItem,
+  type Product,
+  type ProductCategory,
+  type StoreSettings,
+  type TemperatureOption,
 } from './types/store';
 
 const AGE_KEY = 'bodegon_age_verified_v1';
@@ -49,7 +53,7 @@ const EMPTY_PROFILE: CustomerProfile = {
   address: '',
   neighborhood: '',
   referencePoint: '',
-  preferredPayment: 'Nequi / Daviplata (Transferencia)',
+  preferredPayment: 'Nequi',
 };
 
 function loadSavedAge(): boolean {
@@ -105,6 +109,8 @@ export default function App() {
   const [cartMap, setCartMap] = useState<Record<string, CartItem>>(loadSavedCart);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [lastOrderId, setLastOrderId] = useState<string | null>(getGuestLastOrderId);
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     const onPopState = () => setCurrentPath(window.location.pathname);
@@ -159,8 +165,9 @@ export default function App() {
               address: remoteProfile.address || prev.address,
               neighborhood: remoteProfile.neighborhood || prev.neighborhood,
               referencePoint: remoteProfile.referencePoint || prev.referencePoint,
-              preferredPayment:
-                remoteProfile.preferredPayment || prev.preferredPayment,
+              preferredPayment: normalizeCustomerPaymentMethod(
+                remoteProfile.preferredPayment || prev.preferredPayment
+              ),
             };
             localStorage.setItem(PROFILE_KEY, JSON.stringify(merged));
             return merged;
@@ -390,6 +397,23 @@ export default function App() {
     });
   };
 
+  const handleOrderCompleted = useCallback(
+    async (orderId: string) => {
+      setLastOrderId(orderId);
+      try {
+        const freshSettings = await fetchStoreSettings();
+        setStoreSettings(freshSettings);
+        await loadInitialCategory(selectedCategory, freshSettings, true);
+      } catch {
+        setStoreSettings((prev) => ({
+          ...prev,
+          catalogVersion: prev.catalogVersion + 1,
+        }));
+      }
+    },
+    [selectedCategory, loadInitialCategory]
+  );
+
   const handleStockShortage = useCallback((shortages: StockShortageItem[]) => {
     if (shortages.length === 0) return;
     const stockById = new Map<string, number>();
@@ -480,6 +504,34 @@ export default function App() {
 
       <OfflineIndicator />
 
+      {lastOrderId && !isCartOpen && (
+        <div className="bg-[#1B4F9C] text-white border-b border-[#072146]/30">
+          <div className="mx-auto max-w-7xl px-3 sm:px-6 py-2 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setTrackingOrderId(lastOrderId)}
+              className="flex-1 min-h-[36px] flex items-center gap-2 text-left text-xs sm:text-sm font-bold hover:underline"
+            >
+              <Package className="h-4 w-4 text-[#F5A623] shrink-0" />
+              <span className="truncate">
+                Pedido #{lastOrderId.slice(0, 8).toUpperCase()} — Toca aquí para ver el estado en vivo
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearGuestLastOrderId();
+                setLastOrderId(null);
+              }}
+              className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-white/75 hover:bg-white/10 hover:text-white"
+              aria-label="Ocultar acceso rápido al último pedido"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <main id="catalogo" className="mx-auto max-w-7xl px-3 sm:px-6 pt-4 sm:pt-6">
         <section className="mb-5 rounded-2xl bg-[#072146] px-4 sm:px-6 py-4 sm:py-5 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -487,7 +539,7 @@ export default function App() {
               Licores, cervezas frías y combos a domicilio 24/7
             </h1>
             <p className="mt-1 text-xs sm:text-sm text-white/80">
-              Entrega rápida en toda la ciudad · Nequi / Daviplata, Efectivo o Datáfono
+              Entrega rápida en toda la ciudad · Pago anticipado por Nequi, Daviplata o Bancolombia
             </p>
           </div>
           <div className="shrink-0 text-left sm:text-right">
@@ -597,6 +649,9 @@ export default function App() {
         onUpdateQty={handleUpdateQty}
         onRemoveItem={handleRemoveCartItem}
         onClearCart={() => setCartMap({})}
+        onOrderCompleted={(orderId) => {
+          void handleOrderCompleted(orderId);
+        }}
         onStockShortage={handleStockShortage}
         onSaveProfileDraft={handleSaveProfileLocal}
         onOpenAuthModal={() => setIsProfileOpen(true)}
@@ -608,13 +663,51 @@ export default function App() {
         user={user}
         isAdmin={isAdmin}
         profile={profile}
+        lastOrderId={lastOrderId}
         onSaveProfileLocal={handleSaveProfileLocal}
         onReorderItems={handleReorderItems}
+        onOpenTracking={(orderId) => {
+          setIsProfileOpen(false);
+          setTrackingOrderId(orderId);
+        }}
         onOpenAdminPage={() => {
           setIsProfileOpen(false);
           navigateTo('/admin');
         }}
       />
+
+      {trackingOrderId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#072146]/70 backdrop-blur-xs p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Seguimiento de pedido en vivo"
+        >
+          <div className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="shrink-0 flex items-center justify-between bg-[#072146] px-4 sm:px-6 py-3.5 text-white">
+              <div className="flex items-center gap-2.5">
+                <Package className="h-5 w-5 text-[#F5A623]" />
+                <h2 className="font-display text-lg font-extrabold">Seguimiento en Vivo</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTrackingOrderId(null)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-white/80 hover:bg-[#1B4F9C]/40 hover:text-white"
+                aria-label="Cerrar seguimiento"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              <OrderTrackingView
+                orderId={trackingOrderId}
+                onClose={() => setTrackingOrderId(null)}
+                closeLabel="Volver a la tienda"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

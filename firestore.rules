@@ -49,11 +49,19 @@ service cloud.firestore {
     // --- Validation Blueprints ---
     function isValidStoreSettings(data) {
       return data.keys().hasAll(['catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop', 'updatedAt']) &&
-        data.keys().hasOnly(['catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop',
+          'transferNequi', 'transferDaviplata', 'transferBancolombiaKey', 'transferHolderName',
+          'updatedAt'
+        ]) &&
         data.catalogVersion is int && data.catalogVersion >= 1 && data.catalogVersion <= 1000000 &&
         data.storeOpen is bool &&
         data.deliveryFeeCop is number && data.deliveryFeeCop >= 0 && data.deliveryFeeCop <= 200000 &&
         data.freeDeliveryMinCop is number && data.freeDeliveryMinCop >= 0 && data.freeDeliveryMinCop <= 2000000 &&
+        (!('transferNequi' in data) || (data.transferNequi is string && data.transferNequi.size() <= 80)) &&
+        (!('transferDaviplata' in data) || (data.transferDaviplata is string && data.transferDaviplata.size() <= 80)) &&
+        (!('transferBancolombiaKey' in data) || (data.transferBancolombiaKey is string && data.transferBancolombiaKey.size() <= 80)) &&
+        (!('transferHolderName' in data) || (data.transferHolderName is string && data.transferHolderName.size() <= 80)) &&
         data.updatedAt is timestamp;
     }
 
@@ -101,7 +109,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'userId', 'isGuest', 'customerName', 'phone', 'address', 'neighborhood',
-          'referencePoint', 'paymentMethod', 'cashTenderCop', 'notes', 'items',
+          'referencePoint', 'paymentMethod', 'receiptLast4', 'cashTenderCop', 'notes', 'items',
           'subtotalCop', 'deliveryFeeCop', 'totalCop', 'cogsCop', 'dateKey',
           'status', 'origin', 'createdAt'
         ]) &&
@@ -113,6 +121,9 @@ service cloud.firestore {
         data.neighborhood is string && data.neighborhood.size() <= 100 &&
         data.referencePoint is string && data.referencePoint.size() <= 180 &&
         data.paymentMethod in [
+          'Nequi',
+          'Daviplata',
+          'Bancolombia / Bre-B',
           'Nequi / Daviplata (Transferencia)',
           'Efectivo contraentrega',
           'Datáfono contraentrega',
@@ -120,6 +131,7 @@ service cloud.firestore {
           'Nequi / Daviplata',
           'Datáfono'
         ] &&
+        (!('receiptLast4' in data) || (data.receiptLast4 is string && data.receiptLast4.size() <= 4)) &&
         data.cashTenderCop is number && data.cashTenderCop >= 0 && data.cashTenderCop <= 200000000 &&
         data.notes is string && data.notes.size() <= 280 &&
         data.items is list && data.items.size() >= 1 && data.items.size() <= 30 &&
@@ -239,6 +251,9 @@ service cloud.firestore {
         data.neighborhood is string && data.neighborhood.size() <= 100 &&
         data.referencePoint is string && data.referencePoint.size() <= 180 &&
         data.preferredPayment in [
+          'Nequi',
+          'Daviplata',
+          'Bancolombia / Bre-B',
           'Nequi / Daviplata (Transferencia)',
           'Efectivo contraentrega',
           'Datáfono contraentrega'
@@ -257,10 +272,17 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow get: if settingId == 'store';
       allow list: if false;
-      allow create, update: if settingId == 'store' &&
+      allow create: if settingId == 'store' &&
         isAdmin() &&
         isValidStoreSettings(incoming()) &&
         incoming().updatedAt == request.time;
+      allow update: if settingId == 'store' &&
+        isValidStoreSettings(incoming()) &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['catalogVersion', 'updatedAt']) &&
+            incoming().catalogVersion == existing().catalogVersion + 1)
+        );
       allow delete: if false;
     }
 
@@ -292,7 +314,8 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow get: if isValidId(orderId) && (
         isAdmin() ||
-        (isSignedIn() && existing().userId == request.auth.uid)
+        (isSignedIn() && existing().userId == request.auth.uid) ||
+        existing().isGuest == true
       );
       allow list: if isAdmin() || (
         isSignedIn() && existing().userId == request.auth.uid

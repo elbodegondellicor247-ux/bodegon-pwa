@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  CheckCircle2,
+  Check,
+  Copy,
+  Landmark,
   LogIn,
-  MessageCircle,
   Minus,
   Plus,
   ShoppingBag,
@@ -11,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
+import { unlockAudioContext } from '../lib/audio';
 import { formatCop, makeCartKey } from '../lib/format';
 import {
   createOrderAndWhatsApp,
@@ -19,23 +21,29 @@ import {
   type StockShortageItem,
 } from '../services/orderService';
 import {
+  normalizeCustomerPaymentMethod,
   PAYMENT_METHODS,
   SCHEMA_LIMITS,
   type CartItem,
   type CustomerProfile,
+  type OrderItem,
   type PaymentMethod,
   type StoreSettings,
 } from '../types/store';
+import { OrderTrackingView } from './OrderTrackingView';
 
 interface ConfirmedOrderSummary extends CreateOrderResult {
   customerName: string;
   phone: string;
   address: string;
   neighborhood: string;
+  referencePoint: string;
   paymentMethod: PaymentMethod;
+  receiptLast4: string;
+  notes: string;
   subtotalCop: number;
   deliveryFeeCop: number;
-  items: CartItem[];
+  items: OrderItem[];
 }
 
 interface CartCheckoutDrawerProps {
@@ -48,6 +56,7 @@ interface CartCheckoutDrawerProps {
   onUpdateQty: (cartKey: string, delta: number) => void;
   onRemoveItem: (cartKey: string) => void;
   onClearCart: () => void;
+  onOrderCompleted: (orderId: string) => void;
   onStockShortage: (shortages: StockShortageItem[]) => void;
   onSaveProfileDraft: (next: CustomerProfile) => void;
   onOpenAuthModal: () => void;
@@ -63,6 +72,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   onUpdateQty,
   onRemoveItem,
   onClearCart,
+  onOrderCompleted,
   onStockShortage,
   onSaveProfileDraft,
   onOpenAuthModal,
@@ -76,9 +86,10 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const [neighborhood, setNeighborhood] = useState(profile?.neighborhood || '');
   const [referencePoint, setReferencePoint] = useState(profile?.referencePoint || '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
-    profile?.preferredPayment || 'Nequi / Daviplata (Transferencia)'
+    normalizeCustomerPaymentMethod(profile?.preferredPayment)
   );
-  const [cashTenderInput, setCashTenderInput] = useState('');
+  const [receiptLast4, setReceiptLast4] = useState('');
+  const [copiedKey, setCopiedKey] = useState<'nequi' | 'daviplata' | 'bancolombia' | null>(null);
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -93,7 +104,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       setAddress(profile?.address || '');
       setNeighborhood(profile?.neighborhood || '');
       setReferencePoint(profile?.referencePoint || '');
-      setPaymentMethod(profile?.preferredPayment || 'Nequi / Daviplata (Transferencia)');
+      setPaymentMethod(normalizeCustomerPaymentMethod(profile?.preferredPayment));
     }
   }, [isOpen, profile, user, step]);
 
@@ -140,7 +151,36 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     (Number(freeDeliveryThreshold) || 0) - safeSubtotal
   );
 
-  const parsedCashTender = Number(cashTenderInput.replace(/\D/g, '')) || 0;
+  const nequiNumber = storeSettings?.transferNequi?.trim() || '304 3806922';
+  const daviplataNumber = storeSettings?.transferDaviplata?.trim() || '304 3806922';
+  const bancolombiaKey = storeSettings?.transferBancolombiaKey?.trim() || '';
+  const holderName = storeSettings?.transferHolderName?.trim() || 'El Bodegón del Licor';
+
+  const handleCopyNumber = async (
+    key: 'nequi' | 'daviplata' | 'bancolombia',
+    rawValue: string
+  ) => {
+    const compact = rawValue.replace(/\s+/g, '');
+    try {
+      await navigator.clipboard.writeText(compact);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = compact;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+    setCopiedKey(key);
+    window.setTimeout(() => {
+      setCopiedKey((curr) => (curr === key ? null : curr));
+    }, 2000);
+  };
 
   const handleFieldFocus = (
     e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -183,6 +223,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const processOrderSubmission = async () => {
     if (isSubmitting) return;
     setFormError('');
+    unlockAudioContext();
 
     if (safeCartItems.length === 0) {
       setFormError('Agrega al menos un producto para continuar.');
@@ -204,22 +245,26 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       setFormError('Ingresa el barrio o sector.');
       return;
     }
-    if (
-      paymentMethod === 'Efectivo contraentrega' &&
-      parsedCashTender > 0 &&
-      parsedCashTender < totalCop
-    ) {
-      setFormError('El valor con el que vas a pagar no puede ser menor al total del pedido.');
-      return;
-    }
 
     const snapshotItems = safeCartItems.map((item) => ({ ...item }));
+    const snapshotOrderItems: OrderItem[] = snapshotItems.map((ci) => ({
+      productId: ci.product.id,
+      name: ci.product.name,
+      presentation: ci.product.presentation,
+      qty: ci.qty,
+      unitPriceCop: Number(ci.product.priceCop) || 0,
+      unitCostCop: Number(ci.product.costPrice) || 0,
+      temperature: ci.product.supportsColdOption ? ci.temperature : 'N/A',
+    }));
     const snapshotSubtotal = subtotalCop;
     const snapshotDeliveryFee = deliveryFeeCop;
     const cleanName = customerName.trim();
     const cleanPhone = phone.trim();
     const cleanAddress = address.trim();
     const cleanNeighborhood = neighborhood.trim();
+    const cleanRef = referencePoint.trim();
+    const cleanNotes = notes.trim();
+    const cleanLast4 = receiptLast4.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4);
 
     setIsSubmitting(true);
     try {
@@ -228,7 +273,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
         phone: cleanPhone,
         address: cleanAddress,
         neighborhood: cleanNeighborhood,
-        referencePoint: referencePoint.trim(),
+        referencePoint: cleanRef,
         preferredPayment: paymentMethod,
       });
 
@@ -237,10 +282,10 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
         phone: cleanPhone,
         address: cleanAddress,
         neighborhood: cleanNeighborhood,
-        referencePoint: referencePoint.trim(),
+        referencePoint: cleanRef,
         paymentMethod,
-        cashTenderCop: parsedCashTender,
-        notes: notes.trim(),
+        receiptLast4: cleanLast4,
+        notes: cleanNotes,
         items: snapshotItems,
         deliveryFeeCop: snapshotDeliveryFee,
       });
@@ -258,12 +303,16 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
         phone: cleanPhone,
         address: cleanAddress,
         neighborhood: cleanNeighborhood,
+        referencePoint: cleanRef,
         paymentMethod,
+        receiptLast4: cleanLast4,
+        notes: cleanNotes,
         subtotalCop: snapshotSubtotal,
         deliveryFeeCop: snapshotDeliveryFee,
-        items: snapshotItems,
+        items: snapshotOrderItems,
       });
       onClearCart();
+      onOrderCompleted(result.orderId);
       setStep('confirmed');
     } catch (err) {
       if (err instanceof InsufficientStockError) {
@@ -290,6 +339,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     setReceipt(null);
     setStep('cart');
     setFormError('');
+    setReceiptLast4('');
     onClose();
   };
 
@@ -316,7 +366,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
             <ShoppingBag className="h-5 w-5 text-[#F5A623]" />
             <h2 className="font-display text-lg font-extrabold">
               {step === 'confirmed'
-                ? '¡Pedido Confirmado!'
+                ? 'Seguimiento de tu Pedido'
                 : step === 'checkout'
                   ? 'Finalizar Pedido'
                   : 'Tu Carrito'}
@@ -337,103 +387,12 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
           className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 pb-24 space-y-5"
         >
           {step === 'confirmed' && receipt ? (
-            <div className="rounded-2xl bg-[#F4F6F9] p-5 border border-[#1B4F9C]/15 space-y-4">
-              <div className="text-center space-y-2">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#128C4A]/15 text-[#128C4A]">
-                  <CheckCircle2 className="h-8 w-8" />
-                </div>
-                <p className="text-xs font-bold text-[#1B4F9C]">
-                  Orden #{receipt.orderId.slice(0, 8).toUpperCase()} · Estado: Pendiente
-                </p>
-                <h3 className="font-display text-xl font-extrabold text-[#072146]">
-                  ¡Pedido Confirmado!
-                </h3>
-                <p className="text-sm text-[#072146]/75">
-                  {receipt.savedToFirestore
-                    ? 'Registramos tu pedido en el sistema y apartamos tus productos. Envíalo por WhatsApp para acelerar tu domicilio 24/7.'
-                    : 'Preparamos tu orden. Toca el botón verde para enviarla por WhatsApp y despacharla de inmediato.'}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-white p-4 border border-[#1B4F9C]/10 space-y-3 text-left">
-                <div className="space-y-1.5 border-b border-[#F4F6F9] pb-3">
-                  <p className="text-xs font-extrabold uppercase tracking-wide text-[#1B4F9C]">
-                    Resumen del pedido
-                  </p>
-                  {receipt.items.map((item) => {
-                    const tempKey = item.product?.supportsColdOption
-                      ? item.temperature
-                      : 'N/A';
-                    const lineTotal =
-                      (Number(item?.product?.priceCop) || 0) * (Number(item?.qty) || 0);
-                    return (
-                      <div
-                        key={makeCartKey(item.product.id, tempKey)}
-                        className="flex items-start justify-between gap-2 text-xs text-[#072146]"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <strong>{Number(item?.qty) || 0}x</strong> {item.product?.name} (
-                          {item.product?.presentation})
-                          {item.product?.supportsColdOption ? ` · ${item.temperature}` : ''}
-                        </span>
-                        <span className="font-bold tabular-nums shrink-0">
-                          {formatCop(lineTotal)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="space-y-1 text-xs text-[#072146]/80 border-b border-[#F4F6F9] pb-3">
-                  <p>
-                    <strong>Entrega:</strong> {receipt.address}, {receipt.neighborhood}
-                  </p>
-                  <p>
-                    <strong>Cliente:</strong> {receipt.customerName} · {receipt.phone}
-                  </p>
-                  <p>
-                    <strong>Pago:</strong> {receipt.paymentMethod}
-                  </p>
-                </div>
-
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between text-[#072146]/75">
-                    <span>Subtotal</span>
-                    <span className="tabular-nums font-medium">{formatCop(receipt.subtotalCop)}</span>
-                  </div>
-                  <div className="flex justify-between text-[#072146]/75">
-                    <span>Costo de domicilio</span>
-                    <span className="tabular-nums font-medium">
-                      {receipt.deliveryFeeCop === 0 ? 'GRATIS' : formatCop(receipt.deliveryFeeCop)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pt-1.5 border-t border-[#F4F6F9] text-base font-extrabold text-[#072146]">
-                    <span>Total a pagar</span>
-                    <span className="font-display text-lg tabular-nums">
-                      {formatCop(receipt.totalCop)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <a
-                href={receipt.whatsappUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#128C4A] px-5 py-3 text-sm font-extrabold text-white shadow-md hover:brightness-110 transition text-center"
-              >
-                <MessageCircle className="h-5 w-5 shrink-0" />
-                Enviar pedido por WhatsApp
-              </a>
-
-              <button
-                type="button"
-                onClick={handleClose}
-                className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 bg-white py-2.5 text-sm font-bold text-[#072146] hover:bg-[#F4F6F9] transition"
-              >
-                Volver al catálogo
-              </button>
-            </div>
+            <OrderTrackingView
+              orderId={receipt.orderId}
+              initialSummary={receipt}
+              onClose={handleClose}
+              closeLabel="Volver al catálogo"
+            />
           ) : safeCartItems.length === 0 ? (
             <div className="py-12 text-center space-y-3">
               {formError && (
@@ -645,11 +604,117 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 </div>
               </div>
 
+              {/* Pago anticipado 100% por transferencia */}
+              <div className="rounded-2xl bg-[#072146] p-4 text-white space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wide text-[#F5A623]">
+                      <Landmark className="h-3.5 w-3.5" />
+                      Pago anticipado por transferencia
+                    </span>
+                    <p className="mt-0.5 text-xs text-white/80">
+                      Titular: <strong className="text-white">{holderName}</strong>
+                    </p>
+                  </div>
+                  <span className="font-display text-sm font-extrabold text-[#F5A623] tabular-nums shrink-0">
+                    {formatCop(totalCop)}
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                    <div className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase text-white/70">
+                        Nequi
+                      </span>
+                      <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
+                        {nequiNumber}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyNumber('nequi', nequiNumber)}
+                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                    >
+                      {copiedKey === 'nequi' ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          ¡Copiado!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          Copiar número
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                    <div className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase text-white/70">
+                        Daviplata
+                      </span>
+                      <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
+                        {daviplataNumber}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyNumber('daviplata', daviplataNumber)}
+                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                    >
+                      {copiedKey === 'daviplata' ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          ¡Copiado!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          Copiar número
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {bancolombiaKey && (
+                    <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                      <div className="min-w-0">
+                        <span className="block text-[10px] font-bold uppercase text-white/70">
+                          Llave Bre-B / Bancolombia
+                        </span>
+                        <span className="font-display text-sm font-extrabold tracking-wide break-all">
+                          {bancolombiaKey}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyNumber('bancolombia', bancolombiaKey)}
+                        className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                      >
+                        {copiedKey === 'bancolombia' ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            ¡Copiado!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            Copiar número
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <span className="block text-xs font-bold text-[#072146]/80 mb-1.5">
-                  Método de pago *
+                  ¿Por qué medio transferiste? *
                 </span>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {PAYMENT_METHODS.map((method) => {
                     const active = paymentMethod === method;
                     return (
@@ -657,7 +722,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                         key={method}
                         type="button"
                         onClick={() => setPaymentMethod(method)}
-                        className={`w-full min-h-[44px] flex items-center justify-between rounded-xl border px-3.5 py-2 text-left text-xs sm:text-sm font-bold transition ${
+                        className={`w-full min-h-[44px] flex items-center justify-between sm:justify-center gap-2 rounded-xl border px-3 py-2 text-left sm:text-center text-xs font-bold transition ${
                           active
                             ? 'bg-[#072146] text-[#F5A623] border-[#072146]'
                             : 'bg-[#F4F6F9] text-[#072146] border-[#1B4F9C]/20 hover:border-[#1B4F9C]'
@@ -665,7 +730,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                       >
                         <span>{method}</span>
                         <span
-                          className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                          className={`sm:hidden h-4 w-4 rounded-full border-2 flex items-center justify-center ${
                             active ? 'border-[#F5A623] bg-[#F5A623]' : 'border-[#072146]/30'
                           }`}
                         />
@@ -675,28 +740,22 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 </div>
               </div>
 
-              {paymentMethod === 'Efectivo contraentrega' && (
-                <div className="rounded-xl bg-[#F4F6F9] p-3 border border-[#1B4F9C]/20">
-                  <label className="block text-xs font-bold text-[#072146] mb-1">
-                    ¿Con cuánto vas a pagar? (opcional, para llevar devuelta)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1000}
-                    value={cashTenderInput}
-                    onChange={(e) => setCashTenderInput(e.target.value)}
-                    onFocus={handleFieldFocus}
-                    placeholder={`Ej. ${Math.max(50000, Math.ceil((Number(totalCop) || 0) / 50000) * 50000)}`}
-                    className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 bg-white px-3 text-base sm:text-sm text-[#072146] tabular-nums focus:border-[#1B4F9C] focus:outline-none"
-                  />
-                  {parsedCashTender >= totalCop && parsedCashTender > 0 && (
-                    <p className="mt-1.5 text-xs font-bold text-[#128C4A] tabular-nums">
-                      Tu devuelta será de {formatCop(parsedCashTender - totalCop)}.
-                    </p>
-                  )}
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                  Últimos 4 dígitos del comprobante (opcional)
+                </label>
+                <input
+                  type="text"
+                  maxLength={SCHEMA_LIMITS.RECEIPT_LAST4_MAX}
+                  value={receiptLast4}
+                  onChange={(e) =>
+                    setReceiptLast4(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4))
+                  }
+                  onFocus={handleFieldFocus}
+                  placeholder="Ej. 4829 (o envíalo por WhatsApp al confirmar)"
+                  className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] tabular-nums focus:border-[#1B4F9C] focus:outline-none"
+                />
+              </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#072146]/80 mb-1">
@@ -737,7 +796,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between text-base font-extrabold text-[#072146] pt-1.5 border-t border-[#1B4F9C]/15">
-                    <span>Total</span>
+                    <span>Total a transferir</span>
                     <span className="tabular-nums">{formatCop(totalCop)}</span>
                   </div>
                 </div>
