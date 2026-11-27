@@ -89,6 +89,7 @@ function loadSavedProfile(): CustomerProfile {
 export default function App() {
   const [ageVerified, setAgeVerified] = useState<boolean>(loadSavedAge);
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState<boolean>(true);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [profile, setProfile] = useState<CustomerProfile>(loadSavedProfile);
 
@@ -138,12 +139,14 @@ export default function App() {
       setUser(nextUser);
       if (!nextUser) {
         setIsAdmin(false);
+        setLoadingAuth(false);
         return;
       }
 
       let adminFlag = isBootstrappedAdmin(nextUser.email);
       if (adminFlag) {
         setIsAdmin(true);
+        setLoadingAuth(false);
         void ensureAdminUserDocument(nextUser);
       } else {
         try {
@@ -153,6 +156,7 @@ export default function App() {
           adminFlag = false;
         }
         setIsAdmin(adminFlag);
+        setLoadingAuth(false);
       }
 
       try {
@@ -510,6 +514,7 @@ export default function App() {
     return (
       <AdminDashboardPage
         user={user}
+        loadingAuth={loadingAuth}
         isAdmin={isAdmin}
         storeSettings={storeSettings}
         onStoreSettingsUpdated={(next) => {

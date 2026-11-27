@@ -65,6 +65,7 @@ import {
 
 interface AdminDashboardPageProps {
   user: FirebaseUser | null;
+  loadingAuth: boolean;
   isAdmin: boolean;
   storeSettings: StoreSettings;
   onStoreSettingsUpdated: (next: StoreSettings) => void;
@@ -88,22 +89,247 @@ function getStoredAdminPin(): string {
   }
 }
 
+interface AdminAuthGateProps {
+  user: FirebaseUser | null;
+  effectiveIsAdmin: boolean;
+  onExitAdmin: () => void;
+}
+
+const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
+  user,
+  effectiveIsAdmin,
+  onExitAdmin,
+}) => {
+  const [emailInput, setEmailInput] = useState(ADMIN_EMAIL);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    setAuthError('');
+    setAuthBusy(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch {
+      setAuthError('No se pudo iniciar sesión con Google.');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
+      setPasswordInput('');
+    } catch {
+      setAuthError('Credenciales inválidas o proveedor Correo/Contraseña deshabilitado.');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-sm border border-[#1B4F9C]/20 space-y-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#072146] text-[#F5A623]">
+              <Shield className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-[#1B4F9C]">El Bodegón del Licor · /admin</p>
+              <h1 className="font-display text-lg font-extrabold text-[#072146]">
+                Acceso Administrador
+              </h1>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onExitAdmin}
+            className="min-h-[40px] inline-flex items-center gap-1 rounded-xl px-3 text-xs font-bold text-[#1B4F9C] hover:bg-[#F4F6F9]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Tienda
+          </button>
+        </div>
+
+        {user && !effectiveIsAdmin ? (
+          <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/25 p-4 space-y-3">
+            <p className="text-sm font-bold text-[#C62828]">
+              Cuenta sin permisos de administrador
+            </p>
+            <p className="text-xs text-[#072146]/80">
+              Iniciaste sesión como <strong>{user.email}</strong>. Solo la cuenta administradora (
+              <strong>{ADMIN_EMAIL}</strong>) puede gestionar inventario y pedidos en vivo.
+            </p>
+            <button
+              type="button"
+              onClick={() => signOut(auth)}
+              className="min-h-[42px] w-full rounded-xl bg-[#072146] text-xs font-bold text-white"
+            >
+              Cerrar sesión y cambiar de cuenta
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs sm:text-sm text-[#072146]/75">
+              Inicia sesión con la cuenta administradora del negocio para acceder al panel en tiempo real.
+            </p>
+
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={handleGoogleLogin}
+              className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#072146] px-4 py-2.5 text-sm font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
+            >
+              <LogIn className="h-4 w-4" />
+              Ingresar con Google
+            </button>
+
+            <form onSubmit={handleEmailLogin} className="space-y-3 pt-3 border-t border-[#F4F6F9]">
+              <div>
+                <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                  Correo administrador
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  className="w-full min-h-[42px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                  Contraseña
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  className="w-full min-h-[42px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                />
+              </div>
+              {authError && (
+                <p className="rounded-xl bg-[#C62828]/10 px-3 py-2 text-xs font-bold text-[#C62828]">
+                  {authError}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={authBusy}
+                className="w-full min-h-[44px] rounded-xl bg-[#F5A623] text-sm font-extrabold text-[#072146] hover:brightness-95 transition"
+              >
+                {authBusy ? 'Verificando...' : 'Ingresar con correo'}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+interface AdminPinGateProps {
+  userEmail: string | null | undefined;
+  onUnlock: (audioUnlockedNow: boolean) => void;
+  onExitAdmin: () => void;
+}
+
+const AdminPinGate: React.FC<AdminPinGateProps> = ({
+  userEmail,
+  onUnlock,
+  onExitAdmin,
+}) => {
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+
+  const handleVerifyPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pinInput.trim() === getStoredAdminPin()) {
+      const unlocked = unlockAudioContext();
+      setPinError('');
+      onUnlock(unlocked);
+    } else {
+      setPinError('PIN incorrecto. Verifica el código e inténtalo de nuevo.');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-sm border border-[#1B4F9C]/20 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#072146] text-[#F5A623]">
+            <KeyRound className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-[#1B4F9C]">{userEmail}</p>
+            <h1 className="font-display text-lg font-extrabold text-[#072146]">
+              PIN de Seguridad /admin
+            </h1>
+          </div>
+        </div>
+
+        <form onSubmit={handleVerifyPin} autoComplete="off" className="space-y-3">
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={6}
+            autoComplete="off"
+            name="admin-pin"
+            aria-label="PIN de seguridad"
+            autoFocus
+            required
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            placeholder="••••"
+            className="w-full min-h-[46px] rounded-xl border border-[#1B4F9C]/30 px-4 text-center text-lg font-extrabold tracking-widest text-[#072146]"
+          />
+          {pinError && (
+            <p className="text-xs font-bold text-[#C62828]">{pinError}</p>
+          )}
+          <button
+            type="submit"
+            className="w-full min-h-[46px] rounded-xl bg-[#F5A623] text-sm font-extrabold text-[#072146] hover:brightness-95 transition"
+          >
+            Desbloquear Panel
+          </button>
+        </form>
+
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onExitAdmin}
+            className="min-h-[40px] text-xs font-bold text-[#1B4F9C] hover:underline"
+          >
+            Volver a la tienda
+          </button>
+          <button
+            type="button"
+            onClick={() => signOut(auth)}
+            className="min-h-[40px] text-xs font-bold text-[#C62828] hover:underline"
+          >
+            Cambiar cuenta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   user,
+  loadingAuth,
   isAdmin,
   storeSettings,
   onStoreSettingsUpdated,
   onExitAdmin,
 }) => {
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
   const [pinUnlocked, setPinUnlocked] = useState(false);
-
-  // Admin Login Form (for direct /admin visit)
-  const [emailInput, setEmailInput] = useState(ADMIN_EMAIL);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authBusy, setAuthBusy] = useState(false);
 
   // Dashboard tabs
   const [tab, setTab] = useState<'orders' | 'inventory' | 'purchases' | 'expenses' | 'finance'>(
@@ -338,44 +564,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     );
   }, [products]);
 
-  const handleGoogleLogin = async () => {
-    setAuthError('');
-    setAuthBusy(true);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch {
-      setAuthError('No se pudo iniciar sesión con Google.');
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    setAuthBusy(true);
-    try {
-      await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
-      setPasswordInput('');
-    } catch {
-      setAuthError('Credenciales inválidas o proveedor Correo/Contraseña deshabilitado.');
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const handleVerifyPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pinInput.trim() === getStoredAdminPin()) {
-      const unlocked = unlockAudioContext();
-      if (unlocked) setAudioUnlocked(true);
-      setPinUnlocked(true);
-      setPinError('');
-    } else {
-      setPinError('PIN incorrecto. Por defecto es 2470 (configurable en Inventario).');
-    }
-  };
-
   const handleStatusChange = async (orderId: string, nextStatus: OrderStatus) => {
     setErrorBanner('');
     try {
@@ -569,12 +757,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   };
 
   const handleSavePinConfig = () => {
-    if (newPinDraft.trim().length < 4) {
-      setErrorBanner('El nuevo PIN debe tener al menos 4 dígitos.');
+    const cleanPin = newPinDraft.trim();
+    if (cleanPin.length < 4 || cleanPin.length > 6) {
+      setErrorBanner('El nuevo PIN debe tener entre 4 y 6 dígitos.');
       return;
     }
     try {
-      localStorage.setItem(PIN_STORAGE_KEY, newPinDraft.trim());
+      localStorage.setItem(PIN_STORAGE_KEY, cleanPin);
       setNewPinDraft('');
       setNotice('PIN de administrador actualizado en este dispositivo.');
     } catch {
@@ -693,168 +882,44 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     }
   };
 
+  if (loadingAuth) {
+    return (
+      <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-sm border border-[#1B4F9C]/20 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#072146] text-[#F5A623]">
+            <Shield className="h-5 w-5 animate-pulse" />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-[#1B4F9C]">El Bodegón del Licor · /admin</p>
+            <p className="text-sm font-extrabold text-[#072146]">Verificando sesión...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // --- GATE 1: Not signed in or not Owner Admin ---
   if (!user || !effectiveIsAdmin) {
     return (
-      <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-sm border border-[#1B4F9C]/20 space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#072146] text-[#F5A623]">
-                <Shield className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-[#1B4F9C]">El Bodegón del Licor · /admin</p>
-                <h1 className="font-display text-lg font-extrabold text-[#072146]">
-                  Acceso Administrador
-                </h1>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onExitAdmin}
-              className="min-h-[40px] inline-flex items-center gap-1 rounded-xl px-3 text-xs font-bold text-[#1B4F9C] hover:bg-[#F4F6F9]"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Tienda
-            </button>
-          </div>
-
-          {user && !effectiveIsAdmin ? (
-            <div className="rounded-xl bg-[#C62828]/10 border border-[#C62828]/25 p-4 space-y-3">
-              <p className="text-sm font-bold text-[#C62828]">
-                Cuenta sin permisos de administrador
-              </p>
-              <p className="text-xs text-[#072146]/80">
-                Iniciaste sesión como <strong>{user.email}</strong>. Solo la cuenta administradora (
-                <strong>{ADMIN_EMAIL}</strong>) puede gestionar inventario y pedidos en vivo.
-              </p>
-              <button
-                type="button"
-                onClick={() => signOut(auth)}
-                className="min-h-[42px] w-full rounded-xl bg-[#072146] text-xs font-bold text-white"
-              >
-                Cerrar sesión y cambiar de cuenta
-              </button>
-            </div>
-          ) : (
-            <>
-              <p className="text-xs sm:text-sm text-[#072146]/75">
-                Inicia sesión con la cuenta administradora del negocio para acceder al panel en tiempo real.
-              </p>
-
-              <button
-                type="button"
-                disabled={authBusy}
-                onClick={handleGoogleLogin}
-                className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#072146] px-4 py-2.5 text-sm font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] transition"
-              >
-                <LogIn className="h-4 w-4" />
-                Ingresar con Google
-              </button>
-
-              <form onSubmit={handleEmailLogin} className="space-y-3 pt-3 border-t border-[#F4F6F9]">
-                <div>
-                  <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                    Correo administrador
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="w-full min-h-[42px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                    Contraseña
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    className="w-full min-h-[42px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
-                  />
-                </div>
-                {authError && (
-                  <p className="rounded-xl bg-[#C62828]/10 px-3 py-2 text-xs font-bold text-[#C62828]">
-                    {authError}
-                  </p>
-                )}
-                <button
-                  type="submit"
-                  disabled={authBusy}
-                  className="w-full min-h-[44px] rounded-xl bg-[#F5A623] text-sm font-extrabold text-[#072146] hover:brightness-95 transition"
-                >
-                  {authBusy ? 'Verificando...' : 'Ingresar con correo'}
-                </button>
-              </form>
-            </>
-          )}
-        </div>
-      </div>
+      <AdminAuthGate
+        user={user}
+        effectiveIsAdmin={effectiveIsAdmin}
+        onExitAdmin={onExitAdmin}
+      />
     );
   }
 
   // --- GATE 2: Configurable Admin PIN Verification ---
   if (!pinUnlocked) {
     return (
-      <div className="min-h-screen bg-[#F4F6F9] flex items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-sm border border-[#1B4F9C]/20 space-y-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#072146] text-[#F5A623]">
-              <KeyRound className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-[#1B4F9C]">{user.email}</p>
-              <h1 className="font-display text-lg font-extrabold text-[#072146]">
-                PIN de Seguridad /admin
-              </h1>
-            </div>
-          </div>
-
-          <form onSubmit={handleVerifyPin} className="space-y-3">
-            <input
-              type="password"
-              inputMode="numeric"
-              autoFocus
-              required
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="Ingresa PIN (por defecto 2470)"
-              className="w-full min-h-[46px] rounded-xl border border-[#1B4F9C]/30 px-4 text-center text-lg font-extrabold tracking-widest text-[#072146]"
-            />
-            {pinError && (
-              <p className="text-xs font-bold text-[#C62828]">{pinError}</p>
-            )}
-            <button
-              type="submit"
-              className="w-full min-h-[46px] rounded-xl bg-[#F5A623] text-sm font-extrabold text-[#072146] hover:brightness-95 transition"
-            >
-              Desbloquear Panel Admin
-            </button>
-          </form>
-
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={onExitAdmin}
-              className="min-h-[40px] text-xs font-bold text-[#1B4F9C] hover:underline"
-            >
-              Volver a la tienda
-            </button>
-            <button
-              type="button"
-              onClick={() => signOut(auth)}
-              className="min-h-[40px] text-xs font-bold text-[#C62828] hover:underline"
-            >
-              Cambiar cuenta
-            </button>
-          </div>
-        </div>
-      </div>
+      <AdminPinGate
+        userEmail={user.email}
+        onUnlock={(unlockedAudio) => {
+          if (unlockedAudio) setAudioUnlocked(true);
+          setPinUnlocked(true);
+        }}
+        onExitAdmin={onExitAdmin}
+      />
     );
   }
 
@@ -1997,10 +2062,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                   <input
                     type="password"
                     inputMode="numeric"
+                    maxLength={6}
+                    autoComplete="off"
                     value={newPinDraft}
                     onChange={(e) => setNewPinDraft(e.target.value)}
-                    placeholder="Nuevo PIN (mín. 4 dígitos)"
-                    className="w-48 min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm"
+                    placeholder="••••"
+                    className="w-40 min-h-[40px] rounded-xl border border-[#1B4F9C]/25 px-3 text-sm tracking-widest"
                   />
                   <button
                     type="button"
