@@ -59,6 +59,8 @@ export interface Product {
 export interface StoreSettings {
   catalogVersion: number;
   storeOpen: boolean;
+  isStoreOpen: boolean;
+  closedMessage: string;
   deliveryFeeCop: number;
   freeDeliveryMinCop: number;
   transferNequi: string;
@@ -255,4 +257,5 @@ export const SCHEMA_LIMITS = {
   RECEIPT_LAST4_MAX: 4,
   TRANSFER_FIELD_MAX: 80,
   DEFAULT_CITY_MAX: 100,
+  CLOSED_MESSAGE_MAX: 280,
 };

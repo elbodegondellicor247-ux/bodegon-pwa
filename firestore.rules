@@ -50,13 +50,15 @@ service cloud.firestore {
     function isValidStoreSettings(data) {
       return data.keys().hasAll(['catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop', 'updatedAt']) &&
         data.keys().hasOnly([
-          'catalogVersion', 'storeOpen', 'deliveryFeeCop', 'freeDeliveryMinCop',
+          'catalogVersion', 'storeOpen', 'isStoreOpen', 'closedMessage', 'deliveryFeeCop', 'freeDeliveryMinCop',
           'transferNequi', 'transferDaviplata', 'transferBancolombiaKey', 'transferHolderName',
           'storeLat', 'storeLng', 'maxDeliveryKm', 'defaultCity',
           'updatedAt'
         ]) &&
         data.catalogVersion is int && data.catalogVersion >= 1 && data.catalogVersion <= 1000000 &&
         data.storeOpen is bool &&
+        (!('isStoreOpen' in data) || data.isStoreOpen is bool) &&
+        (!('closedMessage' in data) || (data.closedMessage is string && data.closedMessage.size() <= 280)) &&
         data.deliveryFeeCop is number && data.deliveryFeeCop >= 0 && data.deliveryFeeCop <= 200000 &&
         data.freeDeliveryMinCop is number && data.freeDeliveryMinCop >= 0 && data.freeDeliveryMinCop <= 2000000 &&
         (!('transferNequi' in data) || (data.transferNequi is string && data.transferNequi.size() <= 80)) &&

@@ -15,6 +15,7 @@ import {
   Minus,
   Package,
   Plus,
+  Power,
   Receipt,
   RefreshCw,
   Rocket,
@@ -462,6 +463,61 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  const handleToggleStoreOpen = async () => {
+    const currentlyOpen = settingsDraft.isStoreOpen !== false;
+    const nextOpen = !currentlyOpen;
+    const cleanClosedMessage =
+      (settingsDraft.closedMessage || '').trim().slice(0, 280) ||
+      'En este momento no tenemos domiciliarios disponibles. Puedes revisar nuestro catálogo, volvemos pronto.';
+
+    setBusy(true);
+    setNotice('');
+    setErrorBanner('');
+    try {
+      const next: StoreSettings = {
+        ...settingsDraft,
+        storeOpen: nextOpen,
+        isStoreOpen: nextOpen,
+        closedMessage: cleanClosedMessage,
+      };
+      await updateStoreSettingsAdmin(next);
+      setSettingsDraft(next);
+      onStoreSettingsUpdated(next);
+      setNotice(
+        nextOpen
+          ? '🟢 Servicio abierto: los clientes ya pueden confirmar domicilios.'
+          : '🔴 Servicio pausado: los clientes ven tu aviso y los pagos/pedidos quedaron bloqueados.'
+      );
+    } catch {
+      setErrorBanner('No se pudo cambiar el estado del servicio en Firestore.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveClosedMessage = async () => {
+    const cleanClosedMessage =
+      (settingsDraft.closedMessage || '').trim().slice(0, 280) ||
+      'En este momento no tenemos domiciliarios disponibles. Puedes revisar nuestro catálogo, volvemos pronto.';
+    setBusy(true);
+    setNotice('');
+    setErrorBanner('');
+    try {
+      const next: StoreSettings = {
+        ...settingsDraft,
+        closedMessage: cleanClosedMessage,
+      };
+      await updateStoreSettingsAdmin(next);
+      setSettingsDraft(next);
+      onStoreSettingsUpdated(next);
+      setNotice('Aviso al cliente guardado en tiempo real.');
+    } catch {
+      setErrorBanner('No se pudo guardar el aviso personalizado.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleSaveDeliverySettings = async () => {
@@ -1007,6 +1063,72 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       </header>
 
       <main className="mx-auto max-w-7xl px-3 sm:px-6 py-5 space-y-5">
+        {/* Interruptor maestro visible en todas las pestañas */}
+        <section
+          aria-label="Interruptor maestro de domicilios"
+          className={`rounded-2xl p-4 sm:p-5 border-2 shadow-xs transition-colors space-y-3 ${
+            settingsDraft.isStoreOpen !== false
+              ? 'bg-[#128C4A]/10 border-[#128C4A]'
+              : 'bg-[#C62828]/10 border-[#C62828]'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <p
+                className={`font-display text-sm sm:text-base font-extrabold ${
+                  settingsDraft.isStoreOpen !== false ? 'text-[#128C4A]' : 'text-[#C62828]'
+                }`}
+              >
+                {settingsDraft.isStoreOpen !== false
+                  ? '🟢 SERVICIO ABIERTO · Recibiendo pedidos'
+                  : '🔴 SERVICIO PAUSADO · No se reciben pedidos'}
+              </p>
+              <p className="text-xs text-[#072146]/75">
+                Control en tiempo real: al pausar, los clientes ven el aviso y se ocultan las cuentas de pago en el checkout.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleToggleStoreOpen()}
+              className={`min-h-[48px] inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-extrabold text-white shadow-sm transition shrink-0 disabled:opacity-60 ${
+                settingsDraft.isStoreOpen !== false
+                  ? 'bg-[#C62828] hover:brightness-110'
+                  : 'bg-[#128C4A] hover:brightness-110'
+              }`}
+            >
+              <Power className="h-4 w-4" />
+              {settingsDraft.isStoreOpen !== false ? 'Pausar domicilios' : 'Abrir servicio'}
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2 pt-1">
+            <input
+              type="text"
+              maxLength={280}
+              value={settingsDraft.closedMessage ?? ''}
+              onChange={(e) =>
+                setSettingsDraft({
+                  ...settingsDraft,
+                  closedMessage: e.target.value,
+                })
+              }
+              placeholder="En este momento no tenemos domiciliarios disponibles. Puedes revisar nuestro catálogo, volvemos pronto."
+              aria-label="Aviso personalizado cuando el servicio está pausado"
+              className="flex-1 min-h-[42px] rounded-xl bg-white border border-[#1B4F9C]/25 px-3 text-xs sm:text-sm text-[#072146] focus:border-[#1B4F9C] focus:outline-none"
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleSaveClosedMessage()}
+              className="min-h-[42px] rounded-xl bg-[#072146] px-4 text-xs font-extrabold text-[#F5A623] hover:bg-[#1B4F9C] disabled:opacity-60 transition shrink-0"
+            >
+              Guardar aviso
+            </button>
+          </div>
+        </section>
+
         {pendingCount > 0 && (
           <div
             role="alert"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Package, SearchX, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Package, SearchX, X } from 'lucide-react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
@@ -25,6 +25,7 @@ import {
   loadCategoryPage,
   PAGE_SIZE,
   searchFirestoreProducts,
+  subscribeStoreSettings,
 } from './services/catalogService';
 import {
   clearGuestLastOrderId,
@@ -93,6 +94,7 @@ export default function App() {
 
   const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
   const storeSettingsRef = useRef<StoreSettings>(DEFAULT_STORE_SETTINGS);
+  const syncedVersionRef = useRef<number>(DEFAULT_STORE_SETTINGS.catalogVersion);
 
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('Todo');
   const selectedCategoryRef = useRef<ProductCategory>('Todo');
@@ -253,24 +255,17 @@ export default function App() {
     void loadInitialCategory(selectedCategory, storeSettingsRef.current);
   }, [selectedCategory, loadInitialCategory]);
 
-  // Read settings/store in parallel on boot; if catalogVersion differs, silently sync active category
+  // Listen to settings/store in real time (onSnapshot) so open/paused state updates live without reload
   useEffect(() => {
-    let active = true;
-    fetchStoreSettings()
-      .then((settings) => {
-        if (!active) return;
-        setStoreSettings(settings);
-        storeSettingsRef.current = settings;
-        if (settings.catalogVersion !== DEFAULT_STORE_SETTINGS.catalogVersion) {
-          void loadInitialCategory(selectedCategoryRef.current, settings, false, true);
-        }
-      })
-      .catch(() => {
-        // Keep DEFAULT_STORE_SETTINGS fallback silently
-      });
-    return () => {
-      active = false;
-    };
+    const unsubscribe = subscribeStoreSettings((settings) => {
+      setStoreSettings(settings);
+      storeSettingsRef.current = settings;
+      if (settings.catalogVersion !== syncedVersionRef.current) {
+        syncedVersionRef.current = settings.catalogVersion;
+        void loadInitialCategory(selectedCategoryRef.current, settings, false, true);
+      }
+    });
+    return () => unsubscribe();
   }, [loadInitialCategory]);
 
   // Persist cart
@@ -518,27 +513,56 @@ export default function App() {
         isAdmin={isAdmin}
         storeSettings={storeSettings}
         onStoreSettingsUpdated={(next) => {
+          const versionChanged = next.catalogVersion !== syncedVersionRef.current;
+          syncedVersionRef.current = next.catalogVersion;
           setStoreSettings(next);
-          loadInitialCategory(selectedCategory, next, true);
+          storeSettingsRef.current = next;
+          if (versionChanged) {
+            void loadInitialCategory(selectedCategory, next, true);
+          }
         }}
         onExitAdmin={() => navigateTo('/')}
       />
     );
   }
 
+  const isStorePaused = storeSettings.isStoreOpen === false;
+  const closedBannerText =
+    storeSettings.closedMessage?.trim() || DEFAULT_STORE_SETTINGS.closedMessage;
+
   return (
     <div className="min-h-screen bg-[#FFFFFF] text-[#072146] pb-28">
       {!ageVerified && <AgeGateModal onConfirm={handleConfirmAge} />}
 
-      <StoreHeader
-        searchTerm={searchTerm}
-        onSearchChange={handleSearchChange}
-        onSearchSubmit={handleSearchSubmit}
-        isSearchingRemote={isSearchingRemote}
-        user={user}
-        isAdmin={isAdmin}
-        onOpenProfile={() => setIsProfileOpen(true)}
-      />
+      <div className="sticky top-0 z-30">
+        {isStorePaused && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="bg-gradient-to-r from-[#C62828] via-[#B71C1C] to-[#991B1B] text-white border-b-2 border-[#F5A623] shadow-md"
+          >
+            <div className="mx-auto max-w-7xl px-3 sm:px-6 py-2.5 flex items-start sm:items-center gap-2.5">
+              <AlertTriangle className="h-5 w-5 text-[#F5A623] shrink-0 mt-0.5 sm:mt-0" />
+              <p className="text-xs sm:text-sm font-extrabold leading-snug">
+                <span className="text-[#F5A623] uppercase tracking-wide mr-1.5">
+                  Domicilios pausados:
+                </span>
+                {closedBannerText}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <StoreHeader
+          searchTerm={searchTerm}
+          onSearchChange={handleSearchChange}
+          onSearchSubmit={handleSearchSubmit}
+          isSearchingRemote={isSearchingRemote}
+          user={user}
+          isAdmin={isAdmin}
+          onOpenProfile={() => setIsProfileOpen(true)}
+        />
+      </div>
 
       <PWAInstallBanner />
 

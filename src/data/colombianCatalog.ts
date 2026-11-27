@@ -3,6 +3,9 @@ import type { Product, StoreSettings } from '../types/store';
 export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   catalogVersion: 1,
   storeOpen: true,
+  isStoreOpen: true,
+  closedMessage:
+    'En este momento no tenemos domiciliarios disponibles. Puedes revisar nuestro catálogo, volvemos pronto.',
   deliveryFeeCop: 4000,
   freeDeliveryMinCop: 120000,
   transferNequi: '304 3806922',

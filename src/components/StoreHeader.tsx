@@ -28,7 +28,7 @@ export const StoreHeader: React.FC<StoreHeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-[#072146] text-white shadow-md">
+    <header className="bg-[#072146] text-white shadow-md">
       <div className="mx-auto max-w-7xl px-3 sm:px-6 py-2.5">
         <div className="flex items-center justify-between gap-2 sm:gap-4">
           {/* Brand + 24/7 urgency badge */}

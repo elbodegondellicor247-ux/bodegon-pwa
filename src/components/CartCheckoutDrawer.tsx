@@ -242,6 +242,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
   const isOutOfRange = coverageStatus === 'out_of_range';
   const isVerifiedOk = coverageStatus === 'verified_ok';
+  const isStoreOpen = storeSettings?.isStoreOpen !== false;
+  const closedMessage =
+    storeSettings?.closedMessage?.trim() || DEFAULT_STORE_SETTINGS.closedMessage;
 
   const specialDeliveryWhatsAppUrl = buildSpecialDeliveryWhatsAppUrl({
     customerName,
@@ -357,6 +360,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     }
     const lower = inner.toLowerCase();
 
+    if (lower.includes('store_paused')) {
+      return '⏸️ Domicilios pausados temporalmente. Puedes revisar tu carrito mientras reabrimos.';
+    }
     if (lower.includes('permission') || lower.includes('insufficient permissions')) {
       return 'No se pudo guardar el pedido por permisos de Firestore. Verifica las reglas de seguridad e intenta nuevamente.';
     }
@@ -377,6 +383,10 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
     setFormError('');
     unlockAudioContext();
 
+    if (!isStoreOpen) {
+      setFormError(`⏸️ Domicilios pausados temporalmente. ${closedMessage}`);
+      return;
+    }
     if (safeCartItems.length === 0) {
       setFormError('Agrega al menos un producto para continuar.');
       return;
@@ -861,158 +871,174 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Pago anticipado 100% por transferencia */}
-              <div className="rounded-2xl bg-[#072146] p-4 text-white space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <span className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wide text-[#F5A623]">
-                      <Landmark className="h-3.5 w-3.5" />
-                      Pago anticipado por transferencia
-                    </span>
-                    <p className="mt-0.5 text-xs text-white/80">
-                      Titular: <strong className="text-white">{holderName}</strong>
-                    </p>
-                  </div>
-                  <span className="font-display text-sm font-extrabold text-[#F5A623] tabular-nums shrink-0">
-                    {formatCop(totalCop)}
-                  </span>
-                </div>
-
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
-                    <div className="min-w-0">
-                      <span className="block text-[10px] font-bold uppercase text-white/70">
-                        Nequi
-                      </span>
-                      <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
-                        {nequiNumber}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyNumber('nequi', nequiNumber)}
-                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
-                    >
-                      {copiedKey === 'nequi' ? (
-                        <>
-                          <Check className="h-3.5 w-3.5" />
-                          ¡Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          Copiar número
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
-                    <div className="min-w-0">
-                      <span className="block text-[10px] font-bold uppercase text-white/70">
-                        Daviplata
-                      </span>
-                      <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
-                        {daviplataNumber}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyNumber('daviplata', daviplataNumber)}
-                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
-                    >
-                      {copiedKey === 'daviplata' ? (
-                        <>
-                          <Check className="h-3.5 w-3.5" />
-                          ¡Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          Copiar número
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {bancolombiaKey && (
-                    <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
-                      <div className="min-w-0">
-                        <span className="block text-[10px] font-bold uppercase text-white/70">
-                          Llave Bre-B / Bancolombia
+              {isStoreOpen ? (
+                <>
+                  {/* Pago anticipado 100% por transferencia */}
+                  <div className="rounded-2xl bg-[#072146] p-4 text-white space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wide text-[#F5A623]">
+                          <Landmark className="h-3.5 w-3.5" />
+                          Pago anticipado por transferencia
                         </span>
-                        <span className="font-display text-sm font-extrabold tracking-wide break-all">
-                          {bancolombiaKey}
-                        </span>
+                        <p className="mt-0.5 text-xs text-white/80">
+                          Titular: <strong className="text-white">{holderName}</strong>
+                        </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyNumber('bancolombia', bancolombiaKey)}
-                        className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
-                      >
-                        {copiedKey === 'bancolombia' ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" />
-                            ¡Copiado!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-3.5 w-3.5" />
-                            Copiar número
-                          </>
-                        )}
-                      </button>
+                      <span className="font-display text-sm font-extrabold text-[#F5A623] tabular-nums shrink-0">
+                        {formatCop(totalCop)}
+                      </span>
                     </div>
-                  )}
-                </div>
-              </div>
 
-              <div>
-                <span className="block text-xs font-bold text-[#072146]/80 mb-1.5">
-                  ¿Por qué medio transferiste? *
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {PAYMENT_METHODS.map((method) => {
-                    const active = paymentMethod === method;
-                    return (
-                      <button
-                        key={method}
-                        type="button"
-                        onClick={() => setPaymentMethod(method)}
-                        className={`w-full min-h-[44px] flex items-center justify-between sm:justify-center gap-2 rounded-xl border px-3 py-2 text-left sm:text-center text-xs font-bold transition ${
-                          active
-                            ? 'bg-[#072146] text-[#F5A623] border-[#072146]'
-                            : 'bg-[#F4F6F9] text-[#072146] border-[#1B4F9C]/20 hover:border-[#1B4F9C]'
-                        }`}
-                      >
-                        <span>{method}</span>
-                        <span
-                          className={`sm:hidden h-4 w-4 rounded-full border-2 flex items-center justify-center ${
-                            active ? 'border-[#F5A623] bg-[#F5A623]' : 'border-[#072146]/30'
-                          }`}
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                        <div className="min-w-0">
+                          <span className="block text-[10px] font-bold uppercase text-white/70">
+                            Nequi
+                          </span>
+                          <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
+                            {nequiNumber}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyNumber('nequi', nequiNumber)}
+                          className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                        >
+                          {copiedKey === 'nequi' ? (
+                            <>
+                              <Check className="h-3.5 w-3.5" />
+                              ¡Copiado!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              Copiar número
+                            </>
+                          )}
+                        </button>
+                      </div>
 
-              <div>
-                <label className="block text-xs font-bold text-[#072146]/80 mb-1">
-                  Últimos 4 dígitos del comprobante (opcional)
-                </label>
-                <input
-                  type="text"
-                  maxLength={SCHEMA_LIMITS.RECEIPT_LAST4_MAX}
-                  value={receiptLast4}
-                  onChange={(e) =>
-                    setReceiptLast4(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4))
-                  }
-                  onFocus={handleFieldFocus}
-                  placeholder="Ej. 4829 (o envíalo por WhatsApp al confirmar)"
-                  className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] tabular-nums focus:border-[#1B4F9C] focus:outline-none"
-                />
-              </div>
+                      <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                        <div className="min-w-0">
+                          <span className="block text-[10px] font-bold uppercase text-white/70">
+                            Daviplata
+                          </span>
+                          <span className="font-display text-sm font-extrabold tracking-wide tabular-nums">
+                            {daviplataNumber}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyNumber('daviplata', daviplataNumber)}
+                          className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                        >
+                          {copiedKey === 'daviplata' ? (
+                            <>
+                              <Check className="h-3.5 w-3.5" />
+                              ¡Copiado!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              Copiar número
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {bancolombiaKey && (
+                        <div className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+                          <div className="min-w-0">
+                            <span className="block text-[10px] font-bold uppercase text-white/70">
+                              Llave Bre-B / Bancolombia
+                            </span>
+                            <span className="font-display text-sm font-extrabold tracking-wide break-all">
+                              {bancolombiaKey}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyNumber('bancolombia', bancolombiaKey)}
+                            className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[#F5A623] px-3 text-xs font-extrabold text-[#072146] hover:brightness-95 transition shrink-0"
+                          >
+                            {copiedKey === 'bancolombia' ? (
+                              <>
+                                <Check className="h-3.5 w-3.5" />
+                                ¡Copiado!
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3.5 w-3.5" />
+                                Copiar número
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="block text-xs font-bold text-[#072146]/80 mb-1.5">
+                      ¿Por qué medio transferiste? *
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {PAYMENT_METHODS.map((method) => {
+                        const active = paymentMethod === method;
+                        return (
+                          <button
+                            key={method}
+                            type="button"
+                            onClick={() => setPaymentMethod(method)}
+                            className={`w-full min-h-[44px] flex items-center justify-between sm:justify-center gap-2 rounded-xl border px-3 py-2 text-left sm:text-center text-xs font-bold transition ${
+                              active
+                                ? 'bg-[#072146] text-[#F5A623] border-[#072146]'
+                                : 'bg-[#F4F6F9] text-[#072146] border-[#1B4F9C]/20 hover:border-[#1B4F9C]'
+                            }`}
+                          >
+                            <span>{method}</span>
+                            <span
+                              className={`sm:hidden h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                                active ? 'border-[#F5A623] bg-[#F5A623]' : 'border-[#072146]/30'
+                              }`}
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#072146]/80 mb-1">
+                      Últimos 4 dígitos del comprobante (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={SCHEMA_LIMITS.RECEIPT_LAST4_MAX}
+                      value={receiptLast4}
+                      onChange={(e) =>
+                        setReceiptLast4(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4))
+                      }
+                      onFocus={handleFieldFocus}
+                      placeholder="Ej. 4829 (o envíalo por WhatsApp al confirmar)"
+                      className="w-full min-h-[44px] rounded-xl border border-[#1B4F9C]/25 px-3 text-base sm:text-sm text-[#072146] tabular-nums focus:border-[#1B4F9C] focus:outline-none"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div
+                  role="alert"
+                  className="rounded-2xl border-2 border-[#C62828]/40 bg-[#C62828]/10 p-4 space-y-1.5"
+                >
+                  <p className="text-xs sm:text-sm font-extrabold text-[#C62828]">
+                    ⏸️ Domicilios pausados temporalmente
+                  </p>
+                  <p className="text-xs font-medium text-[#072146] leading-relaxed">
+                    {closedMessage} Los datos de pago se ocultaron para evitar transferencias mientras el servicio está en pausa.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-[#072146]/80 mb-1">
@@ -1084,17 +1110,19 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
                 <button
                   type="button"
-                  disabled={isSubmitting || !isVerifiedOk}
+                  disabled={isSubmitting || !isVerifiedOk || !isStoreOpen}
                   onClick={() => void processOrderSubmission()}
                   className="w-full min-h-[48px] rounded-xl bg-[#F5A623] px-5 py-3 text-sm font-extrabold text-[#072146] hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
-                  {isSubmitting
-                    ? 'Procesando pedido...'
-                    : isOutOfRange
-                      ? 'Fuera de cobertura normal'
-                      : !isVerifiedOk
-                        ? 'Verifica tu dirección para continuar'
-                        : 'Confirmar Pedido'}
+                  {!isStoreOpen
+                    ? '⏸️ Domicilios pausados temporalmente'
+                    : isSubmitting
+                      ? 'Procesando pedido...'
+                      : isOutOfRange
+                        ? 'Fuera de cobertura normal'
+                        : !isVerifiedOk
+                          ? 'Verifica tu dirección para continuar'
+                          : 'Confirmar Pedido'}
                 </button>
               </div>
             </form>

@@ -63,6 +63,16 @@
           "maxLength": 100,
           "description": "Ciudad por defecto para dar contexto a las búsquedas gratuitas en OpenStreetMap Nominatim (ej. Bogotá, Colombia)."
         },
+        "isStoreOpen": {
+          "type": "boolean",
+          "description": "Interruptor maestro de apertura/pausa de domicilios en tiempo real."
+        },
+        "closedMessage": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280,
+          "description": "Aviso editable que ven los clientes cuando los domicilios están pausados."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",

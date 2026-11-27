@@ -268,6 +268,15 @@ export async function createOrderAndWhatsApp(input: CreateOrderInput): Promise<C
         transaction.get(settingsRef),
       ]);
 
+      if (settingsSnap.exists()) {
+        const sData = settingsSnap.data();
+        const openFlag =
+          sData.isStoreOpen !== undefined ? sData.isStoreOpen !== false : sData.storeOpen !== false;
+        if (!openFlag) {
+          throw new Error('STORE_PAUSED');
+        }
+      }
+
       const shortages: StockShortageItem[] = [];
       const updates: { ref: ReturnType<typeof doc>; nextStock: number }[] = [];
       const liveCostByProduct = new Map<string, number>();
@@ -895,10 +904,19 @@ function buildSanitizedStoreSettingsDoc(settings: StoreSettings, catalogVersion:
     settings.defaultCity || DEFAULT_STORE_SETTINGS.defaultCity,
     SCHEMA_LIMITS.DEFAULT_CITY_MAX
   );
+  const isOpen =
+    settings.isStoreOpen !== undefined ? Boolean(settings.isStoreOpen) : Boolean(settings.storeOpen);
+  const cleanClosedMessage =
+    sanitizeText(
+      settings.closedMessage || DEFAULT_STORE_SETTINGS.closedMessage,
+      SCHEMA_LIMITS.CLOSED_MESSAGE_MAX
+    ) || DEFAULT_STORE_SETTINGS.closedMessage;
 
   return {
     catalogVersion: Math.max(1, Math.floor(catalogVersion)),
-    storeOpen: Boolean(settings.storeOpen),
+    storeOpen: isOpen,
+    isStoreOpen: isOpen,
+    closedMessage: cleanClosedMessage,
     deliveryFeeCop: Math.max(0, Math.round(Number(settings.deliveryFeeCop) || 0)),
     freeDeliveryMinCop: Math.max(0, Math.round(Number(settings.freeDeliveryMinCop) || 0)),
     transferNequi: sanitizeText(

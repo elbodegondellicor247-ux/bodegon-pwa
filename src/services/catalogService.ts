@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   limit,
+  onSnapshot,
   query,
   startAfter,
   where,
@@ -107,6 +108,88 @@ export function getAllCachedProducts(): Product[] {
   return byId.size > 0 ? Array.from(byId.values()) : COLOMBIAN_TEST_CATALOG;
 }
 
+export function parseStoreSettingsData(data?: DocumentData): StoreSettings {
+  if (!data) {
+    return DEFAULT_STORE_SETTINGS;
+  }
+  const rawDelivery = data.deliveryFeeCop ?? data.deliveryFee;
+  const rawFreeMin = data.freeDeliveryMinCop ?? data.freeDeliveryThreshold;
+  const parsedDelivery = Number(rawDelivery);
+  const parsedFree = Number(rawFreeMin);
+  const parsedVersion = Number(data.catalogVersion);
+  const parsedLat = Number(data.storeLat);
+  const parsedLng = Number(data.storeLng);
+  const parsedMaxKm = Number(data.maxDeliveryKm);
+  const isOpen =
+    data.isStoreOpen !== undefined ? data.isStoreOpen !== false : data.storeOpen !== false;
+
+  return {
+    catalogVersion: Number.isFinite(parsedVersion) && parsedVersion >= 1 ? parsedVersion : 1,
+    storeOpen: isOpen,
+    isStoreOpen: isOpen,
+    closedMessage:
+      typeof data.closedMessage === 'string' && data.closedMessage.trim()
+        ? data.closedMessage.trim().slice(0, 280)
+        : DEFAULT_STORE_SETTINGS.closedMessage,
+    deliveryFeeCop:
+      rawDelivery !== undefined &&
+      rawDelivery !== null &&
+      Number.isFinite(parsedDelivery)
+        ? Math.max(0, parsedDelivery)
+        : DEFAULT_STORE_SETTINGS.deliveryFeeCop,
+    freeDeliveryMinCop:
+      rawFreeMin !== undefined &&
+      rawFreeMin !== null &&
+      Number.isFinite(parsedFree)
+        ? Math.max(0, parsedFree)
+        : DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
+    transferNequi:
+      typeof data.transferNequi === 'string' && data.transferNequi.trim()
+        ? data.transferNequi.trim()
+        : DEFAULT_STORE_SETTINGS.transferNequi,
+    transferDaviplata:
+      typeof data.transferDaviplata === 'string' && data.transferDaviplata.trim()
+        ? data.transferDaviplata.trim()
+        : DEFAULT_STORE_SETTINGS.transferDaviplata,
+    transferBancolombiaKey:
+      typeof data.transferBancolombiaKey === 'string'
+        ? data.transferBancolombiaKey.trim()
+        : DEFAULT_STORE_SETTINGS.transferBancolombiaKey,
+    transferHolderName:
+      typeof data.transferHolderName === 'string' && data.transferHolderName.trim()
+        ? data.transferHolderName.trim()
+        : DEFAULT_STORE_SETTINGS.transferHolderName,
+    storeLat:
+      data.storeLat !== undefined &&
+      data.storeLat !== null &&
+      Number.isFinite(parsedLat) &&
+      parsedLat >= -90 &&
+      parsedLat <= 90
+        ? parsedLat
+        : DEFAULT_STORE_SETTINGS.storeLat,
+    storeLng:
+      data.storeLng !== undefined &&
+      data.storeLng !== null &&
+      Number.isFinite(parsedLng) &&
+      parsedLng >= -180 &&
+      parsedLng <= 180
+        ? parsedLng
+        : DEFAULT_STORE_SETTINGS.storeLng,
+    maxDeliveryKm:
+      data.maxDeliveryKm !== undefined &&
+      data.maxDeliveryKm !== null &&
+      Number.isFinite(parsedMaxKm) &&
+      parsedMaxKm >= 0.1 &&
+      parsedMaxKm <= 100
+        ? parsedMaxKm
+        : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
+    defaultCity:
+      typeof data.defaultCity === 'string' && data.defaultCity.trim()
+        ? data.defaultCity.trim().slice(0, 100)
+        : DEFAULT_STORE_SETTINGS.defaultCity,
+  };
+}
+
 /**
  * Reads ONLY 1 document (settings/store) on app startup to check catalogVersion.
  */
@@ -117,76 +200,7 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
     if (!snap.exists()) {
       return DEFAULT_STORE_SETTINGS;
     }
-    const data = snap.data() ?? {};
-    const rawDelivery = data.deliveryFeeCop ?? data.deliveryFee;
-    const rawFreeMin = data.freeDeliveryMinCop ?? data.freeDeliveryThreshold;
-    const parsedDelivery = Number(rawDelivery);
-    const parsedFree = Number(rawFreeMin);
-    const parsedVersion = Number(data.catalogVersion);
-    const parsedLat = Number(data.storeLat);
-    const parsedLng = Number(data.storeLng);
-    const parsedMaxKm = Number(data.maxDeliveryKm);
-
-    return {
-      catalogVersion: Number.isFinite(parsedVersion) && parsedVersion >= 1 ? parsedVersion : 1,
-      storeOpen: data.storeOpen !== false,
-      deliveryFeeCop:
-        rawDelivery !== undefined &&
-        rawDelivery !== null &&
-        Number.isFinite(parsedDelivery)
-          ? Math.max(0, parsedDelivery)
-          : DEFAULT_STORE_SETTINGS.deliveryFeeCop,
-      freeDeliveryMinCop:
-        rawFreeMin !== undefined &&
-        rawFreeMin !== null &&
-        Number.isFinite(parsedFree)
-          ? Math.max(0, parsedFree)
-          : DEFAULT_STORE_SETTINGS.freeDeliveryMinCop,
-      transferNequi:
-        typeof data.transferNequi === 'string' && data.transferNequi.trim()
-          ? data.transferNequi.trim()
-          : DEFAULT_STORE_SETTINGS.transferNequi,
-      transferDaviplata:
-        typeof data.transferDaviplata === 'string' && data.transferDaviplata.trim()
-          ? data.transferDaviplata.trim()
-          : DEFAULT_STORE_SETTINGS.transferDaviplata,
-      transferBancolombiaKey:
-        typeof data.transferBancolombiaKey === 'string'
-          ? data.transferBancolombiaKey.trim()
-          : DEFAULT_STORE_SETTINGS.transferBancolombiaKey,
-      transferHolderName:
-        typeof data.transferHolderName === 'string' && data.transferHolderName.trim()
-          ? data.transferHolderName.trim()
-          : DEFAULT_STORE_SETTINGS.transferHolderName,
-      storeLat:
-        data.storeLat !== undefined &&
-        data.storeLat !== null &&
-        Number.isFinite(parsedLat) &&
-        parsedLat >= -90 &&
-        parsedLat <= 90
-          ? parsedLat
-          : DEFAULT_STORE_SETTINGS.storeLat,
-      storeLng:
-        data.storeLng !== undefined &&
-        data.storeLng !== null &&
-        Number.isFinite(parsedLng) &&
-        parsedLng >= -180 &&
-        parsedLng <= 180
-          ? parsedLng
-          : DEFAULT_STORE_SETTINGS.storeLng,
-      maxDeliveryKm:
-        data.maxDeliveryKm !== undefined &&
-        data.maxDeliveryKm !== null &&
-        Number.isFinite(parsedMaxKm) &&
-        parsedMaxKm >= 0.1 &&
-        parsedMaxKm <= 100
-          ? parsedMaxKm
-          : DEFAULT_STORE_SETTINGS.maxDeliveryKm,
-      defaultCity:
-        typeof data.defaultCity === 'string' && data.defaultCity.trim()
-          ? data.defaultCity.trim().slice(0, 100)
-          : DEFAULT_STORE_SETTINGS.defaultCity,
-    };
+    return parseStoreSettingsData(snap.data());
   } catch (error) {
     // Offline fallback to cached settings if available
     const cached = readCatalogCache();
@@ -201,6 +215,29 @@ export async function fetchStoreSettings(): Promise<StoreSettings> {
     }
     return DEFAULT_STORE_SETTINGS;
   }
+}
+
+/**
+ * Real-time listener on settings/store so store open/paused status updates instantaneously on clients.
+ */
+export function subscribeStoreSettings(
+  onSettings: (settings: StoreSettings) => void,
+  onError?: (error: unknown) => void
+): () => void {
+  const ref = doc(db, 'settings', 'store');
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onSettings(DEFAULT_STORE_SETTINGS);
+        return;
+      }
+      onSettings(parseStoreSettingsData(snap.data()));
+    },
+    (error) => {
+      if (onError) onError(error);
+    }
+  );
 }
 
 export interface CatalogPageResult {
